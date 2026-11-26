@@ -23,6 +23,9 @@
 ## Hecho (v0.3.2)
 - [x] Palabra clave con gramática cerrada (llamado/libre) y freno automático de la cámara
 
+## Hecho (v0.6.0)
+- [x] T010 Charla libre con IA (Groq): lo que no entiende por reglas va a la IA en la PC, con historial corto y herramientas (temporizador, recordatorio, agenda, clima, impresoras). Clave solo en el servidor, cargada desde el panel
+
 ## Hecho (v0.5.0)
 - [x] Paciencia al hablar (espera 1 s de silencio y junta los pedazos), temporizadores y recordatorios por voz (agenda persistente en la PC, alarma con reloj/campana, cuenta regresiva en pantalla), "cuánto falta para…", listar/cancelar; se quitaron los botones de Clima y Ya me levanté (quedan por voz)
 
@@ -62,5 +65,4 @@
 - [ ] T007 Desplegar en Vercel (HTTPS, necesario para la cámara en el celu) y agregar a pantalla de inicio
 - [ ] T008 Elegir ntfy público con tema secreto o ntfy propio en la Raspberry
 - [ ] T009 Enganchar el agente del taller: un POST a ntfy junto al aviso de Telegram (cambio chico en `agente/src/avisos.ts` de suite_impresion_3D)
-- [ ] T010 Conversación por voz (reconocimiento de voz + IA)
 - [ ] T011 Más botones (a definir)

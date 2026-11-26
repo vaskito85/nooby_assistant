@@ -13,6 +13,7 @@ import { extname, join, normalize, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { GET as pedirCiudad } from '../api/ciudad.js'
 import { GET as pedirClima } from '../api/clima.js'
+import { charlar, describirCodigo, ErrorIA, ERRORES, limpiarMensajes, MODELO_POR_DEFECTO } from './ia.mjs'
 
 const RAIZ = fileURLToPath(new URL('..', import.meta.url))
 const WEB = join(RAIZ, 'dist')
@@ -32,6 +33,8 @@ const porDefecto = {
     adb: 'adb',
     autoabrir: true,
     ntfy: { servidor: 'https://ntfy.sh', tema: '' },
+    /** Charla libre con IA (Groq). La clave vive solo acá: nunca se manda al celu ni a /api/config. */
+    ia: { clave: '', modelo: MODELO_POR_DEFECTO },
   },
 }
 
@@ -40,7 +43,7 @@ function cargar() {
     const g = JSON.parse(readFileSync(ARCHIVO, 'utf8'))
     return {
       config: { ...porDefecto.config, ...g.config },
-      servidor: { ...porDefecto.servidor, ...g.servidor, ntfy: { ...porDefecto.servidor.ntfy, ...g.servidor?.ntfy } },
+      servidor: { ...porDefecto.servidor, ...g.servidor, ntfy: { ...porDefecto.servidor.ntfy, ...g.servidor?.ntfy }, ia: { ...porDefecto.servidor.ia, ...g.servidor?.ia } },
     }
   } catch {
     return structuredClone(porDefecto)
@@ -291,6 +294,90 @@ function revisarAgenda() {
   if (cambio || agenda.length !== antes) guardarAgenda()
 }
 
+// ---------- charla con IA: herramientas que puede usar ----------
+const claveIA = () => process.env.GROQ_API_KEY || estado.servidor.ia.clave
+const CLAVE_OK = /^[A-Za-z0-9_\-]{10,200}$/
+const MODELO_OK = /^[A-Za-z0-9_.\-/:]{1,80}$/
+const llamadasIA = [] // para no gastar el cupo gratis por un bucle o un error: máximo 20 por minuto
+function cupoLocalIA() {
+  const t = Date.now()
+  while (llamadasIA.length > 0 && t - llamadasIA[0] > 60_000) llamadasIA.shift()
+  if (llamadasIA.length >= 20) return false
+  llamadasIA.push(t)
+  return true
+}
+const horaLocal = (ms) => new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short', hour12: false }).format(ms)
+
+function agregarAgenda(c) {
+  if (pendientesAgenda().length >= AGENDA_MAX) throw new Error('hay demasiadas cosas pendientes')
+  const it = itemAgenda(c, Date.now())
+  if (!it) throw new Error('el momento tiene que ser futuro (hasta 400 días)')
+  agenda.push(it)
+  guardarAgenda()
+  return it
+}
+
+/** Ejecuta una herramienta pedida por la IA. Devuelve un objeto simple (o tira un Error con el motivo). */
+async function herramientaIA(nombre, a) {
+  const ahora = Date.now()
+  switch (nombre) {
+    case 'poner_temporizador': {
+      const min = Number(a.minutos)
+      if (!Number.isFinite(min) || min <= 0) throw new Error('minutos inválidos')
+      const it = agregarAgenda({ tipo: 'temporizador', texto: String(a.etiqueta ?? ''), enMs: Math.round(min * 60_000) })
+      return { ok: true, suena_a_las: horaLocal(it.cuando) }
+    }
+    case 'crear_recordatorio': {
+      const texto = String(a.texto ?? '').trim()
+      if (!texto) throw new Error('falta el texto')
+      let cuando
+      if (a.en_minutos != null && Number.isFinite(Number(a.en_minutos))) cuando = ahora + Number(a.en_minutos) * 60_000
+      else {
+        const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{1,2}):(\d{2})$/.exec(String(a.fecha_hora ?? '').trim())
+        if (!m) throw new Error('falta en_minutos o fecha_hora con formato AAAA-MM-DD HH:MM')
+        cuando = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime()
+      }
+      const it = agregarAgenda({ tipo: 'recordatorio', texto, cuando: Math.round(cuando) })
+      return { ok: true, suena: horaLocal(it.cuando) }
+    }
+    case 'ver_agenda':
+      return {
+        pendientes: pendientesAgenda()
+          .sort((x, y) => x.cuando - y.cuando)
+          .map((i) => ({ tipo: i.tipo, texto: i.texto, en_minutos: Math.max(0, Math.round((i.cuando - ahora) / 60_000)), a_las: horaLocal(i.cuando) })),
+      }
+    case 'cancelar_agenda': {
+      const cuales = String(a.cuales ?? '')
+      if (!['temporizador', 'recordatorio', 'todos'].includes(cuales)) throw new Error('cuales inválido')
+      const antes = agenda.length
+      agenda = agenda.filter((i) => !(i.estado === 'pendiente' && (cuales === 'todos' || i.tipo === cuales)))
+      guardarAgenda()
+      return { canceladas: antes - agenda.length }
+    }
+    case 'ver_clima': {
+      const { lat, lon, ciudad } = estado.config
+      const r = await pedirClima(new Request(`http://local/api/clima?lat=${lat}&lon=${lon}`))
+      if (!r.ok) throw new Error('no pude consultar el clima')
+      const j = await r.json()
+      return {
+        ciudad,
+        temperatura: j.current?.temperature_2m,
+        sensacion: j.current?.apparent_temperature,
+        cielo: describirCodigo(j.current?.weather_code),
+        maxima_hoy: j.daily?.temperature_2m_max?.[0],
+        minima_hoy: j.daily?.temperature_2m_min?.[0],
+        probabilidad_lluvia_pct: j.daily?.precipitation_probability_max?.[0],
+      }
+    }
+    case 'ver_impresoras': {
+      if (impresoras.ts == null) return { error: 'todavía no llegó ningún informe de las impresoras' }
+      return { informe_hace_minutos: Math.round((ahora - impresoras.ts) / 60_000), impresoras: impresoras.impresoras }
+    }
+    default:
+      throw new Error('herramienta desconocida')
+  }
+}
+
 /** Lee el cuerpo como bytes (para la foto). Corta si supera el máximo. */
 function leerBinario(req, max) {
   return new Promise((resolve, reject) => {
@@ -458,6 +545,7 @@ async function manejar(req, res) {
       fotos: fotos.size,
       pedidos: pedidosVigentes().length,
       agenda: pendientesAgenda().length,
+      ia: Boolean(claveIA()),
     })
   }
 
@@ -602,6 +690,65 @@ async function manejar(req, res) {
       return json(res, 200, { ok: true, canceladas: antes - agenda.length })
     } catch {
       return json(res, 400, { error: 'JSON inválido' })
+    }
+  }
+
+  if (ruta === '/api/ia') {
+    // Nunca devuelve la clave: solo si hay una y qué modelo se usa.
+    if (req.method === 'GET') return json(res, 200, { configurada: Boolean(claveIA()), entorno: Boolean(process.env.GROQ_API_KEY), modelo: estado.servidor.ia.modelo })
+    if (req.method === 'PUT') {
+      if (!String(req.headers['content-type']).includes('application/json')) return json(res, 415, { error: 'usá application/json' })
+      try {
+        const c = JSON.parse(await leerCuerpo(req))
+        if (c.borrar === true) estado.servidor.ia.clave = ''
+        if (typeof c.clave === 'string' && c.clave.trim()) {
+          if (!CLAVE_OK.test(c.clave.trim())) return json(res, 400, { error: 'la clave tiene caracteres raros' })
+          estado.servidor.ia.clave = c.clave.trim()
+        }
+        if (typeof c.modelo === 'string' && c.modelo.trim()) {
+          if (!MODELO_OK.test(c.modelo.trim())) return json(res, 400, { error: 'modelo inválido' })
+          estado.servidor.ia.modelo = c.modelo.trim()
+        }
+        guardar()
+        return json(res, 200, { configurada: Boolean(claveIA()), entorno: Boolean(process.env.GROQ_API_KEY), modelo: estado.servidor.ia.modelo })
+      } catch {
+        return json(res, 400, { error: 'JSON inválido' })
+      }
+    }
+  }
+
+  if (ruta === '/api/charla' && req.method === 'POST') {
+    // La cara manda lo que oyó (con el historial corto) y recibe qué decir. Solo por localhost.
+    if (!String(req.headers['content-type']).includes('application/json')) return json(res, 415, { error: 'usá application/json' })
+    let c
+    try {
+      c = JSON.parse(await leerCuerpo(req, 16384))
+    } catch {
+      return json(res, 400, { error: 'JSON inválido' })
+    }
+    const historial = limpiarMensajes(c.mensajes)
+    if (historial.length === 0) return json(res, 400, { error: 'falta mensajes (el último tiene que ser del usuario)' })
+    if (!claveIA()) return json(res, 200, { error: 'sin_clave', texto: ERRORES.sin_clave })
+    if (!cupoLocalIA()) return json(res, 200, { error: 'cupo', texto: ERRORES.cupo })
+    try {
+      const { texto } = await charlar({
+        clave: claveIA(),
+        modelo: estado.servidor.ia.modelo,
+        historial,
+        contexto: {
+          nombre: estado.config.nombre,
+          ciudad: estado.config.ciudad,
+          ahora: new Date(),
+          sentadoMin: num(c.sentadoMin, 0, 1440, 0),
+        },
+        ejecutar: herramientaIA,
+      })
+      return json(res, 200, { texto })
+    } catch (e) {
+      const tipo = e instanceof ErrorIA ? e.tipo : 'ia'
+      if (!(e instanceof ErrorIA)) console.log('[ia] error:', e)
+      else console.log(`[ia] ${tipo}`)
+      return json(res, 200, { error: tipo, texto: ERRORES[tipo] ?? ERRORES.ia })
     }
   }
 

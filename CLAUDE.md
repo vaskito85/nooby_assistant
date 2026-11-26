@@ -36,7 +36,7 @@ Web app de una pantalla (Vite + React + TS) que se muestra en un celu viejo (Gal
   Dos modos (`NoobyNativo.modoOido`): **llamado** = gramática cerrada ["che nube","che nuevo","nube",…] (el modelo no conoce "nooby", así que
   se le ofrecen palabras comunes parecidas; barato y casi sin falsos positivos) y **libre** = vocabulario completo, que se usa mientras está
   "atento" para entender los pedidos. La web cambia de modo según su estado. Mientras habla el TTS el micrófono se pausa (si no se oiría a sí mismo). `window.__noobyDebug.oido` guarda lo último que entendió.
-  Etapa 2 pendiente: preguntas libres con una IA (la clave quedaría en el servidor de la PC, nunca en el celu).
+  Etapa 2 hecha (v0.6): ver **Charla con IA**.
 - Comentarios (`lib/comentarios.ts`, con tests): al irte tras 30 s–5 min sentado dice "¿Ya te vas? Trabajaste poco." (máx. 1 cada 10 min);
   al volver tras 2 min o más dice "¡Hola de nuevo! ¿Cómo estuvo el recreo? ¿Qué hacemos ahora?". No pisan una alarma de impresión.
 - Sonidos: solo la alarma de la impresión suena como alarma; clima/recordatorios/enojo no tienen "ding" (el enojo solo habla).
@@ -61,6 +61,7 @@ Web app de una pantalla (Vite + React + TS) que se muestra en un celu viejo (Gal
   `POST /api/pedido` deja el pedido en el servidor (45 s, solo localhost) y el agente lo atiende con `GET /api/pedidos?espera=20` (consulta larga, con token) → `POST /api/foto`.
   La vista `foto` muestra `VisorFoto` (grande, en el lugar de la cara) + una tarjeta; "pidiéndole la foto…" y, a los 20 s sin foto, explica. Cerrar la vista cancela el pedido. Solo fotos (sin video).
 - **Paciencia** (`ESPERA_FIN_MS` en App.tsx): los finales de Vosk se juntan y se procesan tras 1 s de silencio; un parcial nuevo reinicia la espera. No se lo puede interrumpir mientras habla.
+- **Charla con IA** (v0.6): lo que `interpretar` no entiende (2+ palabras) va a `POST /api/charla` (App.tsx `charlarLibre`, historial de 10 mensajes que se reinicia a los 5 min). El servidor (`servidor/ia.mjs`, con tests en `tests/ia.test.ts`) llama a Groq (API tipo OpenAI, modelo por defecto llama-3.3-70b-versatile) con herramientas: poner_temporizador, crear_recordatorio, ver_agenda, cancelar_agenda, ver_clima, ver_impresoras; se ejecutan en el servidor (`herramientaIA`). La clave está en `~/.nooby/config.json` (`servidor.ia`) o en GROQ_API_KEY; se carga desde el panel (sección 5, `/api/ia`, que nunca la devuelve) y NUNCA llega al celu. Tope local 20 llamadas/min. Sin clave o sin internet: el "¿Cómo? No te entendí." de siempre. NOOBY_IA_URL cambia el endpoint (para pruebas con un Groq falso).
 - **Agenda** (v0.5): temporizadores y recordatorios viven en el servidor (`~/.nooby/agenda.json`, `/api/agenda`, `/api/agenda/cancelar`, evento SSE `agenda`; si no hay cara conectada queda pendiente 24 h). Parseo en `lib/numeros.ts`, `lib/tiempo.ts`, `lib/fechas.ts` (cuánto falta para Navidad, etc.). Diálogo de seguimiento (`dialogoRef`): si falta el texto o la hora, pregunta; un pedido nuevo claro cancela la pregunta. Alarma: `RelojAnimado` + `PanelAviso`. No hay botones en pantalla: clima y "ya me levanté" son solo por voz.
 - **Mensajes**: los comunes se van solos 5 s después de decirse (voz + 5 s); la alarma de la impresora queda hasta el OK o 5 min. Lo que se oye se muestra en vivo (`zona-oyendo`, ✓/✗);
   si no entiende dice "¿Cómo? No te entendí."

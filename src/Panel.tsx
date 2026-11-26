@@ -7,6 +7,10 @@ import {
   leerImpresoras,
   leerRed,
   estadoLocal,
+  charlarIA,
+  guardarIA,
+  leerIA,
+  type InfoIA,
   guardarConfigLocal,
   leerConfigLocal,
   type EstadoServidor,
@@ -43,6 +47,10 @@ export function Panel() {
   const [red, setRed] = useState<Red | null>(null)
   const [informe, setInforme] = useState<InformeImpresoras>({ ts: null, impresoras: [] })
   const [copiadoToken, setCopiadoToken] = useState(false)
+  const [ia, setIa] = useState<InfoIA | null>(null)
+  const [claveIa, setClaveIa] = useState('')
+  const [modeloIa, setModeloIa] = useState('')
+  const [notaIa, setNotaIa] = useState('')
 
   // Detecta el modo y, si es local, trae la config guardada en la PC.
   useEffect(() => {
@@ -114,6 +122,38 @@ export function Panel() {
       setEstado('Aviso de prueba enviado: tiene que sonar en el celu.')
     } catch (e) {
       setEstado(`No pude enviar la prueba: ${e instanceof Error ? e.message : 'error'}`)
+    }
+  }
+
+  // Charla con IA: la clave se guarda en la PC y nunca vuelve a mostrarse.
+  useEffect(() => {
+    if (modo !== 'local') return
+    void leerIA()
+      .then((i) => {
+        setIa(i)
+        setModeloIa((m) => m || i.modelo)
+      })
+      .catch(() => undefined)
+  }, [modo])
+
+  const guardarClaveIa = async (cambio: { clave?: string; modelo?: string; borrar?: boolean }) => {
+    try {
+      const i = await guardarIA(cambio)
+      setIa(i)
+      setClaveIa('')
+      setNotaIa(cambio.borrar ? 'Clave borrada.' : 'Guardado ✓')
+    } catch (e) {
+      setNotaIa(`No pude guardar: ${e instanceof Error ? e.message : 'error'}`)
+    }
+  }
+
+  const probarIa = async () => {
+    setNotaIa('Probando…')
+    try {
+      const r = await charlarIA([{ rol: 'yo', texto: 'Presentate en una frase corta.' }], 0)
+      setNotaIa(r.error ? `No anduvo: ${r.texto}` : `Anda ✓ Nooby dice: «${r.texto}»`)
+    } catch (e) {
+      setNotaIa(`No pude probar: ${e instanceof Error ? e.message : 'error'}`)
     }
   }
 
@@ -322,6 +362,48 @@ export function Panel() {
                 ? 'todavía no llegó ningún informe.'
                 : `último informe hace ${Math.max(0, Math.round((Date.now() - informe.ts) / 1000))} s. ${describirImpresoras(informe, Date.now())}`}
             </p>
+          </>
+        ) : (
+          <p className="chico">Necesita el modo USB (el servidor de la PC con el celu enchufado).</p>
+        )}
+      </section>
+
+      <section className="ajustes">
+        <h2>5. Charla libre (inteligencia artificial)</h2>
+        {modo === 'local' ? (
+          <>
+            <p className="chico">
+              Lo que Nooby no entiende por las frases fijas se lo pregunta a una IA (Groq, plan gratis), que además puede poner
+              temporizadores y recordatorios, ver el clima y las impresoras. La clave se guarda solo en esta PC: no pasa por el celu.
+              Sacala gratis en <code>console.groq.com</code> (API Keys).
+            </p>
+            <p>{ia?.configurada ? '✓ Hay una clave cargada.' : 'Todavía no hay clave: Nooby sigue con las frases fijas.'}</p>
+            <label>
+              Clave de Groq (empieza con gsk_)
+              <input
+                type="password"
+                autoComplete="off"
+                placeholder={ia?.configurada ? 'Pegá otra para reemplazarla' : 'gsk_…'}
+                value={claveIa}
+                onChange={(e) => setClaveIa(e.target.value)}
+              />
+            </label>
+            <label>
+              Modelo
+              <input value={modeloIa} maxLength={80} onChange={(e) => setModeloIa(e.target.value)} />
+            </label>
+            <button className="boton" onClick={() => void guardarClaveIa({ clave: claveIa, modelo: modeloIa })}>
+              Guardar
+            </button>
+            <button className="boton" disabled={!ia?.configurada} onClick={() => void probarIa()}>
+              Probar
+            </button>
+            {ia?.configurada && !ia.entorno && (
+              <button className="boton" onClick={() => void guardarClaveIa({ borrar: true })}>
+                Borrar la clave
+              </button>
+            )}
+            {notaIa && <p className="chico">{notaIa}</p>}
           </>
         ) : (
           <p className="chico">Necesita el modo USB (el servidor de la PC con el celu enchufado).</p>

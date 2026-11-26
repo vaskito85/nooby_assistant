@@ -21,7 +21,7 @@ import { callar, desbloquear, hablar, sonar, type Sonido } from './lib/audio'
 import { frase, pedirClima, type Clima } from './lib/clima'
 import { escenaClima } from './lib/escenas'
 import { aplicarRemota, cargarAjustes, guardarAjustes, limpiarLlamadas, temaConfig, type Ajustes } from './lib/config'
-import { conectarLocal, estadoLocal, cancelarAgendaServidor, cancelarPedidoFoto, crearAgenda, guardarConfigLocal, leerAgenda, leerImpresoras, pedirFoto, urlFoto, type AgendaItem } from './lib/canalLocal'
+import { charlarIA, conectarLocal, estadoLocal, cancelarAgendaServidor, cancelarPedidoFoto, crearAgenda, guardarConfigLocal, leerAgenda, leerImpresoras, pedirFoto, urlFoto, type AgendaItem } from './lib/canalLocal'
 import { conectarNtfy } from './lib/ntfy'
 import { Presencia } from './lib/presencia'
 import { Sentado } from './lib/sentado'
@@ -34,6 +34,8 @@ declare global {
 }
 
 const MIN = 60_000
+const HISTORIAL_MAX = 10 // mensajes que se le mandan a la IA como contexto
+const HISTORIAL_VIDA_MS = 5 * 60_000 // pasado este silencio, la conversación empieza de cero
 const ESPERA_FIN_MS = 1000 // tras una pausa, espera esto antes de dar por terminada tu frase
 const CIERRE_MENSAJE_MS = 5000 // los mensajes se van solos 5 segundos después de decirse
 const AVISO_IMPRESORA_MS = 5 * MIN // el aviso de la impresora queda en pantalla hasta el OK o hasta este tiempo
@@ -519,7 +521,15 @@ export function App() {
 
   // Lo último que dijo por voz, para "repetí".
   const ultimaRespuesta = useRef('')
+  // Historial corto de la conversación (lo que dijiste y lo que contestó Nooby) para que la IA entienda "y mañana?".
+  const historial = useRef<{ rol: 'yo' | 'nooby'; texto: string; en: number }[]>([])
+  const anotar = (rol: 'yo' | 'nooby', texto: string) => {
+    const ahora = Date.now()
+    if (historial.current.length > 0 && ahora - historial.current[historial.current.length - 1].en > HISTORIAL_VIDA_MS) historial.current = []
+    historial.current = [...historial.current, { rol, texto, en: ahora }].slice(-HISTORIAL_MAX)
+  }
   const responder = (texto: string) => {
+    anotar('nooby', texto)
     ultimaRespuesta.current = texto
     lanzarAviso(texto, 'suave', false, { cerrarEn: 12_000, forzarVoz: true })
   }
@@ -863,15 +873,38 @@ export function App() {
     mantenerAtento(12_000)
   }
 
+  /** Lo que ninguna regla entiende va a la IA (en la PC). Sin IA configurada o una sola palabra: el "¿Cómo?" de siempre. */
+  const charlarLibre = async (texto: string) => {
+    const noEntendi = () => {
+      responder('¿Cómo? No te entendí.')
+      mantenerAtento()
+    }
+    if (texto.trim().split(/\s+/).length < 2) return noEntendi()
+    mantenerAtento(30_000) // no se duerme mientras piensa
+    setNota('Pensando…')
+    try {
+      const msgs = historial.current.map(({ rol, texto: t }) => ({ rol, texto: t }))
+      const r = await charlarIA(msgs, minutos(sentado.current.sentadoMs))
+      setNota('')
+      if (r.error === 'sin_clave') return noEntendi()
+      responder(r.texto)
+      void refrescarAgenda() // por si la IA puso o canceló un temporizador o recordatorio
+      mantenerAtento(15_000)
+    } catch {
+      setNota('')
+      noEntendi()
+    }
+  }
+
   const atender = (texto: string) => {
     if (dialogoRef.current && continuarDialogo(texto)) {
       mantenerAtento(15_000)
       return
     }
+    anotar('yo', texto)
     const orden = interpretar(texto)
     if (!orden) {
-      responder('¿Cómo? No te entendí.')
-      mantenerAtento()
+      void charlarLibre(texto)
       return
     }
     ejecutar(orden, texto)

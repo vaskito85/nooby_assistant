@@ -218,3 +218,49 @@ export async function cancelarAgendaServidor(cuerpo: { id?: string; tipo?: 'temp
   if (!r.ok) throw new Error(`el servidor respondió ${r.status}`)
   return (await r.json()).canceladas ?? 0
 }
+
+// ---------- charla libre con IA (la clave vive solo en el servidor de la PC) ----------
+export interface MensajeCharla {
+  rol: 'yo' | 'nooby'
+  texto: string
+}
+
+/** Respuesta de la IA. Si hay `error`, `texto` igual trae algo para decir en voz alta (ej. "me quedé sin cupo"). */
+export interface RespuestaCharla {
+  texto: string
+  error?: 'sin_clave' | 'clave' | 'cupo' | 'red' | 'ia'
+}
+
+export async function charlarIA(mensajes: MensajeCharla[], sentadoMin: number): Promise<RespuestaCharla> {
+  const r = await fetch('/api/charla', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ mensajes, sentadoMin }),
+  })
+  if (!r.ok) throw new Error(`charla ${r.status}`)
+  return r.json()
+}
+
+export interface InfoIA {
+  configurada: boolean
+  /** La clave viene de la variable de entorno GROQ_API_KEY (no se puede borrar desde el panel). */
+  entorno: boolean
+  modelo: string
+}
+
+export async function leerIA(): Promise<InfoIA> {
+  const r = await fetch('/api/ia', { cache: 'no-store' })
+  if (!r.ok) throw new Error(`ia ${r.status}`)
+  return r.json()
+}
+
+/** Guarda la clave y/o el modelo (o borra la clave). El servidor nunca devuelve la clave. */
+export async function guardarIA(cambio: { clave?: string; modelo?: string; borrar?: boolean }): Promise<InfoIA> {
+  const r = await fetch('/api/ia', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(cambio),
+  })
+  if (!r.ok) throw new Error(((await r.json().catch(() => null)) as { error?: string } | null)?.error ?? `el servidor respondió ${r.status}`)
+  return r.json()
+}
