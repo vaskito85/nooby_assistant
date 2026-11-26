@@ -23,6 +23,9 @@
 ## Hecho (v0.3.2)
 - [x] Palabra clave con gramática cerrada (llamado/libre) y freno automático de la cámara
 
+## Hecho (v0.4.0)
+- [x] Entrenar la frase de despertar con la voz del usuario (panel + celu + gramática dinámica en el APK)
+
 ## Pendiente
 - [ ] T016 Probar el oído en el celu: ajustar cómo entiende "che nooby" (ver window.__noobyDebug.oido)
 - [ ] T017 Etapa 2: preguntas libres con una IA (evaluar plan gratis; clave en el servidor de la PC)

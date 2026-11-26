@@ -40,6 +40,10 @@ Web app de una pantalla (Vite + React + TS) que se muestra en un celu viejo (Gal
 - Comentarios (`lib/comentarios.ts`, con tests): al irte tras 30 s–5 min sentado dice "¿Ya te vas? Trabajaste poco." (máx. 1 cada 10 min);
   al volver tras 2 min o más dice "¡Hola de nuevo! ¿Cómo estuvo el recreo? ¿Qué hacemos ahora?". No pisan una alarma de impresión.
 - Sonidos: solo la alarma de la impresión suena como alarma; clima/recordatorios/enojo no tienen "ding" (el enojo solo habla).
+- **Entrenar la frase de despertar**: el modelo no conoce "nooby", así que se le enseña con tu voz. Panel > "3. Despertar a Nooby" > "Entrenar con mi voz":
+  el servidor emite el evento SSE `entrenar`, el celu pide repetir la frase 5 veces (modo libre), anota lo que entiende el reconocedor
+  (p. ej. "china vi") y lo guarda como `llamadas` en la config. Esas frases pasan a ser la gramática del modo llamado
+  (`NoobyNativo.modoOido(modo, gramaticaJson)`, APK >= 0.4.0, `apiVersion() >= 2`). Se suman entre entrenamientos; el panel las quita.
 - La cámara se auto-frena: si una lectura tarda mucho (celu cargado), espera el doble antes de la siguiente (`msInferencia` en __noobyDebug).
 - Depurar el celu: `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>` + CDP; `window.__noobyDebug` trae ciclos, cuadros,
   conCara, msInferencia. La app del celu solo se reinstala si cambia su versionName (si no, se pierden los permisos).

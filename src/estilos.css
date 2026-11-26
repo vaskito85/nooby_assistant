@@ -542,3 +542,23 @@ body {
 .sugerencias small {
   color: var(--suave);
 }
+
+.fichas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ficha {
+  background: var(--fondo);
+  color: var(--texto);
+  border: 1px solid var(--borde);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.ficha:hover {
+  border-color: var(--alerta);
+}

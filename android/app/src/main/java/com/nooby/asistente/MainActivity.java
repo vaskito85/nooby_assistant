@@ -69,7 +69,8 @@ public class MainActivity extends Activity {
     //  - "llamado": solo puede oír "che nube / nuevo…" (gramática cerrada): barato y casi sin falsos positivos.
     //    El modelo no conoce "nooby", así que se le ofrecen palabras comunes que suenan parecido.
     //  - "libre": vocabulario completo, para entender lo que se le pide después de despertarlo.
-    private static final String GRAMATICA_LLAMADO =
+    // Gramática del modo "llamado". La web la reemplaza con las frases que el usuario entrenó con su voz.
+    private String gramaticaLlamado =
             "[\"che nube\", \"che nubes\", \"che nuevo\", \"nube\", \"nubes\", \"[unk]\"]";
     private Model modelo;
     private SpeechService servicioVoz;
@@ -195,7 +196,7 @@ public class MainActivity extends Activity {
     private void arrancarReconocedor() {
         try {
             Recognizer rec = "llamado".equals(modoOido)
-                    ? new Recognizer(modelo, FRECUENCIA, GRAMATICA_LLAMADO)
+                    ? new Recognizer(modelo, FRECUENCIA, gramaticaLlamado)
                     : new Recognizer(modelo, FRECUENCIA);
             recActual = rec;
             servicioVoz = new SpeechService(rec, FRECUENCIA);
@@ -220,9 +221,14 @@ public class MainActivity extends Activity {
     }
 
     /** Cambia entre esperar "che nooby" ("llamado") y entender lo que se pide ("libre"). */
-    private void cambiarModoOido(String modo) {
+    private void cambiarModoOido(String modo, String gramatica) {
         if (!"llamado".equals(modo) && !"libre".equals(modo)) return;
-        if (modo.equals(modoOido)) return;
+        // La gramática solo se acepta si parece una lista JSON de frases (la arma la web con las variantes entrenadas).
+        boolean cambioGramatica = gramatica != null && gramatica.startsWith("[") && gramatica.length() < 4000
+                && !gramatica.equals(gramaticaLlamado);
+        if (cambioGramatica) gramaticaLlamado = gramatica;
+        boolean reiniciarPorGramatica = cambioGramatica && "llamado".equals(modo) && "llamado".equals(modoOido);
+        if (modo.equals(modoOido) && !reiniciarPorGramatica) return;
         modoOido = modo;
         if (modelo == null || servicioVoz == null) return; // todavía no arrancó: arrancará ya en este modo
         servicioVoz.stop();
@@ -341,9 +347,15 @@ public class MainActivity extends Activity {
             });
         }
 
+        /** Versión de este puente: 2 = modoOido(modo, gramatica) y entrenamiento de la frase de despertar. */
         @JavascriptInterface
-        public void modoOido(final String modo) {
-            runOnUiThread(() -> cambiarModoOido(modo));
+        public int apiVersion() {
+            return 2;
+        }
+
+        @JavascriptInterface
+        public void modoOido(final String modo, final String gramatica) {
+            runOnUiThread(() -> cambiarModoOido(modo, gramatica));
         }
 
         @JavascriptInterface

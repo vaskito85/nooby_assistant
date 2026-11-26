@@ -44,7 +44,9 @@ declare global {
       hablar(texto: string): void
       callar(): void
       /** "llamado" = solo espera "che nooby"; "libre" = entiende lo que se le pide. (APK 0.3.2 o más nuevo) */
-      modoOido?(modo: 'llamado' | 'libre'): void
+      modoOido?(modo: 'llamado' | 'libre', gramatica?: string): void
+      /** 2 = acepta la gramática y permite entrenar la frase de despertar (APK 0.4.0 o más nuevo). */
+      apiVersion?(): number
     }
   }
 }

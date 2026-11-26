@@ -6,8 +6,8 @@ import { Mirada } from './lib/mirada'
 import { detectarLlamado, interpretar, type Orden } from './lib/voz'
 import { callar, desbloquear, hablar, sonar, type Sonido } from './lib/audio'
 import { frase, pedirClima } from './lib/clima'
-import { aplicarRemota, cargarAjustes, guardarAjustes, temaConfig, type Ajustes } from './lib/config'
-import { conectarLocal, estadoLocal } from './lib/canalLocal'
+import { aplicarRemota, cargarAjustes, guardarAjustes, limpiarLlamadas, temaConfig, type Ajustes } from './lib/config'
+import { conectarLocal, estadoLocal, guardarConfigLocal } from './lib/canalLocal'
 import { conectarNtfy } from './lib/ntfy'
 import { Presencia } from './lib/presencia'
 import { Sentado } from './lib/sentado'
@@ -20,6 +20,10 @@ declare global {
 }
 
 const MIN = 60_000
+const INTENTOS_ENTRENAMIENTO = 5 // cuántas veces repite la frase al entrenar
+const ENTRENAMIENTO_MAX_MS = 120_000 // si nadie dice nada, se cancela solo
+// Mientras no hay nada entrenado, el reconocedor espera estas (el modelo no conoce "nooby": son lo más parecido que sabe).
+const GRAMATICA_DEFECTO = ['che nube', 'che nubes', 'che nuevo', 'nube', 'nubes']
 const PERIODO_CAMARA_MS = 120 // ~8 lecturas por segundo: los ojos siguen en tiempo real
 const PENSAMIENTO_CADA_MS = 60_000
 const PENSAMIENTO_DURA_MS = 5000
@@ -60,6 +64,8 @@ export function App() {
   // Oído: 'sin' = no disponible (navegador común); 'listo' = esperando "che nooby"; 'atento' = ya respondió y escucha el pedido
   const [oido, setOido] = useState<'sin' | 'listo' | 'atento'>('sin')
   const [oyo, setOyo] = useState('')
+  // Entrenamiento de la frase de despertar (lo pide el panel de la PC): el celu te la hace repetir y anota cómo la entiende.
+  const [entrenando, setEntrenando] = useState<{ frase: string; intentos: string[]; resultado?: string[] } | null>(null)
   const [ntfyOk, setNtfyOk] = useState<boolean | null>(null)
   const [modo, setModo] = useState<'detectando' | 'local' | 'ntfy'>('detectando')
   const [nota, setNota] = useState('')
@@ -88,6 +94,10 @@ export function App() {
   const ultimoYaTeVas = useRef(0)
   const alOirRef = useRef<(d: { text?: string; partial?: string }) => void>(() => {})
   const timerAtento = useRef<number | null>(null)
+  const entrenandoRef = useRef(entrenando)
+  entrenandoRef.current = entrenando
+  const timerEntrenar = useRef<number | null>(null)
+  const iniciarEntrenamientoRef = useRef<(frase: string) => void>(() => {})
   const mirada = useRef<Mirada | null>(null)
   const dedoActivo = useRef(false)
   const timerDedo = useRef<number | null>(null)
@@ -326,6 +336,7 @@ export function App() {
         setAjustes(nuevo)
       },
       estadoEnlace,
+      (frase) => iniciarEntrenamientoRef.current(frase),
     )
   }, [modo, lanzarAviso])
 
@@ -459,6 +470,61 @@ export function App() {
     }
   }
 
+  // ---------- entrenar la frase de despertar con tu voz ----------
+  const cancelarEntrenamiento = () => {
+    if (timerEntrenar.current) window.clearTimeout(timerEntrenar.current)
+    setEntrenando(null)
+  }
+
+  const iniciarEntrenamiento = (frase: string) => {
+    if (typeof window.NoobyNativo?.modoOido !== 'function') {
+      setNota('Para entrenar hace falta la app del celu (APK) más nueva.')
+      return
+    }
+    if (timerAtento.current) window.clearTimeout(timerAtento.current)
+    setOido('listo')
+    setEntrenando({ frase, intentos: [] })
+    lanzarAviso(
+      `Vamos a enseñarme a despertar. Decí ${frase}, ${INTENTOS_ENTRENAMIENTO} veces, con una pausa entre cada una.`,
+      'suave',
+      false,
+      { cerrarEn: 9000, forzarVoz: true },
+    )
+    if (timerEntrenar.current) window.clearTimeout(timerEntrenar.current)
+    timerEntrenar.current = window.setTimeout(() => setEntrenando(null), ENTRENAMIENTO_MAX_MS)
+  }
+  iniciarEntrenamientoRef.current = iniciarEntrenamiento
+
+  const terminarEntrenamiento = (frase: string, intentos: string[]) => {
+    // Variantes distintas, las más repetidas primero (máximo 8): son cómo entiende el reconocedor TU forma de decirla.
+    const cuenta = new Map<string, number>()
+    for (const i of intentos) cuenta.set(i, (cuenta.get(i) ?? 0) + 1)
+    const variantes = [...cuenta.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([v]) => v)
+    const llamadas = limpiarLlamadas([...ajustesRef.current.llamadas, ...variantes])
+    const nuevo = { ...ajustesRef.current, llamadas }
+    guardarAjustes(nuevo)
+    setAjustes(nuevo)
+    void guardarConfigLocal({ llamadas }).catch(() => setNota('No pude guardar el entrenamiento en la PC.'))
+    setEntrenando({ frase, intentos, resultado: variantes })
+    // Se dice en voz alta pero sin burbuja: abajo queda la lista de lo que entendió.
+    hablar('Listo, ya aprendí tu frase.')
+    setHablando(true)
+    window.setTimeout(() => setHablando(false), 2500)
+    if (timerEntrenar.current) window.clearTimeout(timerEntrenar.current)
+    timerEntrenar.current = window.setTimeout(() => setEntrenando(null), 9000)
+  }
+
+  const registrarIntento = (texto: string) => {
+    const e = entrenandoRef.current
+    if (!e || e.resultado) return
+    const limpio = texto.toLowerCase().replace(/\[unk\]/g, ' ').replace(/\s+/g, ' ').trim()
+    // Solo frases cortas y de letras: lo demás es ruido o charla de fondo.
+    if (!limpio || limpio.split(' ').length > 5 || !/^[a-záéíóúüñ ]+$/.test(limpio)) return
+    const intentos = [...e.intentos, limpio]
+    if (intentos.length >= INTENTOS_ENTRENAMIENTO) terminarEntrenamiento(e.frase, intentos)
+    else setEntrenando({ ...e, intentos })
+  }
+
   // Lo que oye el celu llega como texto (el APK solo hace de micrófono): acá se decide qué hacer.
   alOirRef.current = (d) => {
     const final = typeof d?.text === 'string'
@@ -467,12 +533,19 @@ export function App() {
     const dbg = window.__noobyDebug ?? (window.__noobyDebug = {})
     const previos = (dbg.oido as string[] | undefined) ?? []
     if (final) dbg.oido = [...previos, texto].slice(-15) // para ver cómo entiende "che nooby" y ajustar
+    if (entrenandoRef.current) {
+      if (final) registrarIntento(texto)
+      return
+    }
     if (oidoRef.current === 'atento') {
       setOyo(texto)
       mantenerAtento() // mientras habla, no se duerme
     }
     if (!final) return
-    const llamado = detectarLlamado(texto, { gramatica: typeof window.NoobyNativo?.modoOido === 'function' })
+    const llamado = detectarLlamado(texto, {
+      gramatica: typeof window.NoobyNativo?.modoOido === 'function',
+      variantes: ajustesRef.current.llamadas,
+    })
     if (oidoRef.current === 'listo') {
       if (!llamado.llamado) return
       if (interpretar(llamado.resto)) {
@@ -488,9 +561,18 @@ export function App() {
   }
 
   // Esperando "che nooby" el celu escucha con gramática cerrada (barato y preciso); atento, con vocabulario libre.
+  const entrenandoActivo = entrenando !== null
+  const llamadasClave = ajustes.llamadas.join('|')
   useEffect(() => {
-    window.NoobyNativo?.modoOido?.(oido === 'atento' ? 'libre' : 'llamado')
-  }, [oido])
+    // Esperando el llamado, el reconocedor solo puede oír tus frases entrenadas (o las de defecto si no entrenaste ninguna).
+    const frases = ajustesRef.current.llamadas.length > 0 ? ajustesRef.current.llamadas : GRAMATICA_DEFECTO
+    const gramatica = JSON.stringify([...frases, '[unk]'])
+    try {
+      window.NoobyNativo?.modoOido?.(oido === 'atento' || entrenandoActivo ? 'libre' : 'llamado', gramatica)
+    } catch {
+      /* APK viejo: su modoOido solo recibe el modo */
+    }
+  }, [oido, entrenandoActivo, llamadasClave])
 
   useEffect(() => {
     const alOyo = (e: Event) => alOirRef.current((e as CustomEvent).detail)
@@ -547,7 +629,7 @@ export function App() {
         ? 'enojado'
         : hablando
           ? 'hablando'
-          : oido === 'atento'
+          : oido === 'atento' || entrenandoActivo
             ? 'atento'
             : mimo || saludo
               ? 'feliz'
@@ -600,6 +682,28 @@ export function App() {
                   <button className={`boton grande ${aviso.sonido}`} onClick={entendido}>
                     Entendido
                   </button>
+                </div>
+              ) : entrenando ? (
+                <div className="nota escuchando">
+                  {entrenando.resultado ? (
+                    <>
+                      <span>¡Listo! Aprendí tu frase.</span>
+                      <span className="oyo">Te entendí: {entrenando.resultado.map((r) => `«${r}»`).join(' ')}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>
+                        Decí «{entrenando.frase}» ({Math.min(entrenando.intentos.length + 1, INTENTOS_ENTRENAMIENTO)} de{' '}
+                        {INTENTOS_ENTRENAMIENTO})
+                      </span>
+                      {entrenando.intentos.length > 0 && (
+                        <span className="oyo">Te entendí: «{entrenando.intentos[entrenando.intentos.length - 1]}»</span>
+                      )}
+                      <button className="boton" onClick={cancelarEntrenamiento}>
+                        Cancelar
+                      </button>
+                    </>
+                  )}
                 </div>
               ) : oido === 'atento' ? (
                 <p className="nota escuchando">

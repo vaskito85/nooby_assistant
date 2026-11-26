@@ -18,6 +18,10 @@ export interface Ajustes {
   voz: boolean
   /** Cómo te llama ("Sí, Ger"). */
   nombre: string
+  /** Cómo se llama la frase para despertarlo (solo para mostrarla al entrenar). */
+  fraseLlamado: string
+  /** Variantes de esa frase, tal como las entiende el reconocedor con tu voz (se llenan al entrenar). */
+  llamadas: string[]
 }
 
 /** Lo que viaja de la PC al celu (todo menos servidor y tema, que el celu ya conoce). */
@@ -36,6 +40,8 @@ export const porDefecto: Ajustes = {
   lon: -62.27,
   voz: true,
   nombre: 'Ger',
+  fraseLlamado: 'che nooby',
+  llamadas: [],
 }
 
 /** Tema de configuración: va en un canal aparte para no mezclarse con las alarmas. */
@@ -82,11 +88,38 @@ export function aRemota(a: Ajustes): ConfigRemota {
     lon: a.lon,
     voz: a.voz,
     nombre: a.nombre,
+    fraseLlamado: a.fraseLlamado,
+    llamadas: a.llamadas,
   }
 }
 
 const num = (v: unknown, min: number, max: number, def: number) =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : def
+
+const FRASE_OK = /^[a-záéíóúüñ ]{1,40}$/
+
+/** Una frase para el reconocedor: minúsculas, letras y espacios, hasta 5 palabras. Devuelve '' si no sirve. */
+export function limpiarVariante(x: unknown): string {
+  if (typeof x !== 'string') return ''
+  const f = x.toLowerCase().replace(/\s+/g, ' ').trim()
+  return FRASE_OK.test(f) && f.split(' ').length <= 5 ? f : ''
+}
+
+/** Lista de variantes entrenadas: sin repetidas ni raras, máximo 20. */
+export function limpiarLlamadas(v: unknown): string[] {
+  if (!Array.isArray(v)) return []
+  const out: string[] = []
+  for (const x of v) {
+    const f = limpiarVariante(x)
+    if (f && !out.includes(f)) out.push(f)
+    if (out.length >= 20) break
+  }
+  return out
+}
+
+function limpiarFrase(v: unknown, def: string): string {
+  return typeof v === 'string' && /^[A-Za-záéíóúüñÁÉÍÓÚÜÑ ]{1,40}$/.test(v.trim()) ? v.trim() : def
+}
 
 /** Valida lo recibido (viene de afuera): ignora lo raro y limita los rangos. */
 export function aplicarRemota(actual: Ajustes, crudo: unknown): Ajustes {
@@ -101,5 +134,7 @@ export function aplicarRemota(actual: Ajustes, crudo: unknown): Ajustes {
     lon: num(c.lon, -180, 180, actual.lon),
     voz: typeof c.voz === 'boolean' ? c.voz : actual.voz,
     nombre: typeof c.nombre === 'string' && c.nombre.trim() && c.nombre.length <= 30 ? c.nombre.trim() : actual.nombre,
+    fraseLlamado: limpiarFrase(c.fraseLlamado, actual.fraseLlamado),
+    llamadas: Array.isArray(c.llamadas) ? limpiarLlamadas(c.llamadas) : actual.llamadas,
   }
 }

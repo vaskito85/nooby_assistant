@@ -44,8 +44,25 @@ export interface Llamado {
  * Con `gramatica` (el APK escuchando con la gramática cerrada "che nube / nuevo…") el reconocedor ya filtró todo lo demás,
  * así que "nube" o "nubes" solas también cuentan: es lo más parecido a "nooby" que conoce el modelo.
  */
-export function detectarLlamado(texto: string, opciones: { gramatica?: boolean } = {}): Llamado {
-  const t = normalizar(texto).split(' ').filter(Boolean)
+export function detectarLlamado(
+  texto: string,
+  opciones: { gramatica?: boolean; /** Frases que el usuario entrenó con su voz (como las entiende el reconocedor). */ variantes?: string[] } = {},
+): Llamado {
+  // "[unk]" (lo que el reconocedor no pudo clasificar) se ignora.
+  const t = normalizar(texto)
+    .split(' ')
+    .filter((w) => w && w !== 'unk')
+
+  // 1) Lo entrenado con tu voz manda: si el texto contiene una de tus variantes (palabras enteras), te están llamando.
+  const relleno = ' ' + t.join(' ') + ' '
+  for (const v of opciones.variantes ?? []) {
+    const vn = normalizar(v)
+    if (!vn) continue
+    const i = relleno.indexOf(' ' + vn + ' ')
+    if (i >= 0) return { llamado: true, resto: relleno.slice(i + vn.length + 2).trim() }
+  }
+
+  // 2) Si no, las formas conocidas de "che nooby".
   for (let i = 0; i < t.length; i++) {
     const w = t[i]
     const exacta = SUENA_COMO_NOOBY.includes(w) || (opciones.gramatica === true && (w === 'nube' || w === 'nubes'))

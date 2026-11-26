@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react'
 import { BuscadorCiudad } from './BuscadorCiudad'
 import {
   avisoLocal,
+  entrenarLocal,
   estadoLocal,
   guardarConfigLocal,
   leerConfigLocal,
   type EstadoServidor,
 } from './lib/canalLocal'
 import type { Ciudad } from './lib/clima'
-import { aRemota, aplicarRemota, cargarPanel, guardarPanel, porDefecto, temaConfig, type Ajustes } from './lib/config'
+import { aRemota, aplicarRemota, cargarPanel, guardarPanel, limpiarLlamadas, porDefecto, temaConfig, type Ajustes } from './lib/config'
 import { enviarNtfy } from './lib/ntfy'
 
 function temaNuevo() {
@@ -42,6 +43,15 @@ export function Panel() {
       if (!vivo) return
       setServidor(e)
       setModo((m) => (m === 'detectando' ? (e ? 'local' : 'ntfy') : m))
+      if (e) {
+        // Las variantes de la frase de despertar las entrena el celu: se traen siempre del servidor.
+        try {
+          const cfg = (await leerConfigLocal()) as { llamadas?: unknown }
+          if (vivo) setA((prev) => ({ ...prev, llamadas: limpiarLlamadas(cfg.llamadas) }))
+        } catch {
+          /* se reintenta en 3 s */
+        }
+      }
       return e
     }
     void mirar().then(async (e) => {
@@ -90,6 +100,29 @@ export function Panel() {
       setEstado('Aviso de prueba enviado: tiene que sonar en el celu.')
     } catch (e) {
       setEstado(`No pude enviar la prueba: ${e instanceof Error ? e.message : 'error'}`)
+    }
+  }
+
+  const entrenar = async () => {
+    try {
+      const r = await entrenarLocal(a.fraseLlamado)
+      setEstado(
+        r.pantallas > 0
+          ? 'Mirá el celu: te va a pedir que digas la frase 5 veces.'
+          : 'No hay ningún celu con la cara abierta. Abrí Nooby en el celu y probá de nuevo.',
+      )
+    } catch (e) {
+      setEstado(`No pude iniciar el entrenamiento: ${e instanceof Error ? e.message : 'error'}`)
+    }
+  }
+
+  const quitarVariante = async (v: string | null) => {
+    const llamadas = v === null ? [] : a.llamadas.filter((x) => x !== v)
+    setA((p) => ({ ...p, llamadas }))
+    try {
+      await guardarConfigLocal({ llamadas })
+    } catch (e) {
+      setEstado(`No pude guardar: ${e instanceof Error ? e.message : 'error'}`)
     }
   }
 
@@ -180,6 +213,45 @@ export function Panel() {
           {modo === 'local' ? 'Guardar y enviar al celu' : 'Enviar al celu'}
         </button>
         {estado && <p className="chico">{estado}</p>}
+      </section>
+
+      <section className="ajustes">
+        <h2>3. Despertar a Nooby</h2>
+        <p className="chico">
+          El modelo de voz no conoce la palabra "nooby", así que se la enseñás con tu voz: el celu te pide repetir la frase 5
+          veces y guarda cómo la entiende. Podés enseñarle más de una frase ("hola nooby", "nobby"…): escribila acá y volvé a
+          entrenar.
+        </p>
+        <label>
+          Frase para despertarlo
+          <input value={a.fraseLlamado} maxLength={40} onChange={(e) => cambiar('fraseLlamado', e.target.value)} />
+        </label>
+        {modo === 'local' ? (
+          <>
+            <button className="boton principal" onClick={entrenar}>
+              Entrenar con mi voz (en el celu)
+            </button>
+            {a.llamadas.length > 0 ? (
+              <>
+                <p className="chico">Lo que aprendió (tocá una para quitarla):</p>
+                <div className="fichas">
+                  {a.llamadas.map((v) => (
+                    <button key={v} className="ficha" onClick={() => void quitarVariante(v)} title="Quitar">
+                      «{v}» ✕
+                    </button>
+                  ))}
+                </div>
+                <button className="boton" onClick={() => void quitarVariante(null)}>
+                  Borrar todo lo aprendido
+                </button>
+              </>
+            ) : (
+              <p className="chico">Todavía no aprendió ninguna: por ahora despierta con "che nube" (lo más parecido que conoce).</p>
+            )}
+          </>
+        ) : (
+          <p className="chico">El entrenamiento necesita el modo USB (el servidor de la PC con el celu enchufado).</p>
+        )}
       </section>
 
       <details className="ajustes">

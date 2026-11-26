@@ -26,6 +26,8 @@ export function conectarLocal(
   alAviso: (texto: string) => void,
   alConfig: (config: unknown) => void,
   alEstado: (conectado: boolean) => void,
+  /** El panel de la PC pidió entrenar la frase de despertar. */
+  alEntrenar?: (frase: string) => void,
 ): () => void {
   const es = new EventSource('/api/eventos')
   es.onopen = () => alEstado(true)
@@ -34,6 +36,14 @@ export function conectarLocal(
     try {
       const { texto } = JSON.parse((e as MessageEvent).data)
       if (typeof texto === 'string') alAviso(texto)
+    } catch {
+      /* se ignora */
+    }
+  })
+  es.addEventListener('entrenar', (e) => {
+    try {
+      const { frase } = JSON.parse((e as MessageEvent).data)
+      alEntrenar?.(typeof frase === 'string' && frase ? frase : 'che nooby')
     } catch {
       /* se ignora */
     }
@@ -70,4 +80,15 @@ export async function avisoLocal(texto: string) {
     body: JSON.stringify({ texto }),
   })
   if (!r.ok) throw new Error(`el servidor respondió ${r.status}`)
+}
+
+/** Le pide al celu que arranque el entrenamiento de la frase de despertar. */
+export async function entrenarLocal(frase: string) {
+  const r = await fetch('/api/entrenar', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ frase }),
+  })
+  if (!r.ok) throw new Error(`el servidor respondió ${r.status}`)
+  return (await r.json()) as { ok: boolean; pantallas: number }
 }

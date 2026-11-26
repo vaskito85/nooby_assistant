@@ -22,7 +22,7 @@ const PAQUETE = 'com.nooby.asistente'
 
 // ---------- configuración ----------
 const porDefecto = {
-  config: { sentadoMin: 60, aguaMin: 45, ciudad: 'Bahía Blanca', lat: -38.72, lon: -62.27, voz: true, nombre: 'Ger' },
+  config: { sentadoMin: 60, aguaMin: 45, ciudad: 'Bahía Blanca', lat: -38.72, lon: -62.27, voz: true, nombre: 'Ger', fraseLlamado: 'che nooby', llamadas: [] },
   servidor: {
     puerto: 8777,
     /** '127.0.0.1' = solo esta PC. '0.0.0.0' = también la red local (entonces /api/aviso pide token). */
@@ -56,6 +56,21 @@ const PUERTO = Number(process.env.NOOBY_PUERTO) || estado.servidor.puerto
 const ADB = process.env.NOOBY_ADB || estado.servidor.adb
 if (!existsSync(ARCHIVO)) guardar()
 
+const FRASE_OK = /^[a-záéíóúüñ ]{1,40}$/
+/** Variantes entrenadas del llamado: minúsculas, letras y espacios, hasta 5 palabras, máximo 20 sin repetir. */
+function validarLlamadas(v) {
+  const out = []
+  for (const x of Array.isArray(v) ? v : []) {
+    if (typeof x !== 'string') continue
+    const f = x.toLowerCase().replace(/\s+/g, ' ').trim()
+    if (FRASE_OK.test(f) && f.split(' ').length <= 5 && !out.includes(f)) out.push(f)
+    if (out.length >= 20) break
+  }
+  return out
+}
+const validarFrase = (v, def) =>
+  typeof v === 'string' && /^[A-Za-záéíóúüñÁÉÍÓÚÜÑ ]{1,40}$/.test(v.trim()) ? v.trim() : def
+
 const num = (v, min, max, def) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : def)
 
 /** Valida lo que llega de afuera (el panel): ignora lo raro y limita los rangos. */
@@ -69,6 +84,8 @@ function validarConfig(c, actual) {
     lon: num(c.lon, -180, 180, actual.lon),
     voz: typeof c.voz === 'boolean' ? c.voz : actual.voz,
     nombre: typeof c.nombre === 'string' && c.nombre.trim() && c.nombre.length <= 30 ? c.nombre.trim() : actual.nombre,
+    fraseLlamado: validarFrase(c.fraseLlamado, actual.fraseLlamado),
+    llamadas: Array.isArray(c.llamadas) ? validarLlamadas(c.llamadas) : actual.llamadas,
   }
 }
 
@@ -255,6 +272,18 @@ async function manejar(req, res) {
       const { texto } = JSON.parse(await leerCuerpo(req))
       if (typeof texto !== 'string' || !texto.trim()) return json(res, 400, { error: 'falta texto' })
       emitir('aviso', { texto: texto.trim().slice(0, 300) })
+      return json(res, 200, { ok: true, pantallas: clientes.size })
+    } catch {
+      return json(res, 400, { error: 'JSON inválido' })
+    }
+  }
+
+  if (ruta === '/api/entrenar' && req.method === 'POST') {
+    // Lo pide el panel: el celu muestra "decí tu frase (1 de 5)" y vuelve con las variantes que entendió.
+    if (!String(req.headers['content-type']).includes('application/json')) return json(res, 415, { error: 'usá application/json' })
+    try {
+      const { frase } = JSON.parse(await leerCuerpo(req))
+      emitir('entrenar', { frase: validarFrase(frase, estado.config.fraseLlamado) })
       return json(res, 200, { ok: true, pantallas: clientes.size })
     } catch {
       return json(res, 400, { error: 'JSON inválido' })
