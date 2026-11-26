@@ -5,7 +5,8 @@ import { PanelImpresora } from './PanelImpresora'
 import { elegirFoto, type FotoRecibida } from './lib/fotos'
 import { Pensamiento } from './Pensamiento'
 import { pcActivo, type ActividadPc } from './lib/actividad'
-import { describirImpresoras, inferirEstado, type EstadoImpresora, type InformeImpresoras } from './lib/impresoras'
+import * as dichos from './lib/respuestas'
+import { describirImpresoras, INFORME_VIGENTE_MS, inferirEstado, type EstadoImpresora, type InformeImpresoras } from './lib/impresoras'
 import { comentarioPorMovimiento, FRASE_HOLA_DE_NUEVO, FRASE_YA_TE_VAS } from './lib/comentarios'
 import { Mirada } from './lib/mirada'
 import { detectarLlamado, esConfirmacion, interpretar, type Orden } from './lib/voz'
@@ -351,6 +352,9 @@ export function App() {
   // Canal local: avisos y ajustes llegan por el cable desde el servidor de la PC.
   useEffect(() => {
     if (modo !== 'local') return
+    void leerImpresoras()
+      .then(setInforme)
+      .catch(() => {})
     // Si la conexión con la PC se corta y vuelve (p. ej. se actualizó el servidor), se recarga la página
     // para tomar la versión nueva de la web.
     let huboCorte = false
@@ -454,7 +458,12 @@ export function App() {
     }, ms)
   }
 
-  const responder = (texto: string) => lanzarAviso(texto, 'suave', false, { cerrarEn: 12_000, forzarVoz: true })
+  // Lo último que dijo por voz, para "repetí".
+  const ultimaRespuesta = useRef('')
+  const responder = (texto: string) => {
+    ultimaRespuesta.current = texto
+    lanzarAviso(texto, 'suave', false, { cerrarEn: 12_000, forzarVoz: true })
+  }
 
   const ejecutar = (orden: Orden) => {
     const { nombre } = ajustesRef.current
@@ -463,12 +472,12 @@ export function App() {
       case 'clima':
         void verClima({ cerrarEn: 15_000, forzarVoz: true })
         break
-      case 'hora': {
-        const h = ahora.getHours()
-        const m = ahora.getMinutes()
-        responder(m === 0 ? `Son las ${h} en punto.` : `Son las ${h} y ${m}.`)
+      case 'hora':
+        responder(dichos.horaHablada(ahora.getHours(), ahora.getMinutes()))
         break
-      }
+      case 'fecha':
+        responder(dichos.fechaHablada(ahora))
+        break
       case 'tiempoSentado':
         responder(
           sentado.current.sentadoMs > 0
@@ -494,8 +503,46 @@ export function App() {
       case 'chau':
         responder('De nada.')
         break
+      case 'despedida':
+        responder(dichos.despedida(nombre))
+        break
       case 'ayuda':
-        responder('Podés pedirme el clima, la hora, cómo van las impresoras, cuánto llevás sentado, o decirme que ya te levantaste o tomaste agua.')
+        responder(
+          'Podés pedirme la hora, la fecha, el clima, cómo van las impresoras, cuánto llevás sentado, un chiste, o decirme que ya te levantaste o tomaste agua. Todas las frases están en el panel.',
+        )
+        break
+      case 'queHaces': {
+        // Pregunta por las impresoras en el momento (no usa un informe guardado que puede estar viejo).
+        const sentadoMin = minutos(sentado.current.sentadoMs)
+        void leerImpresoras()
+          .catch(() => null)
+          .then((d) => {
+            const vigente = d != null && d.ts != null && Date.now() - d.ts <= INFORME_VIGENTE_MS
+            const imprimiendo = vigente ? d.impresoras.filter((p) => p.estado === 'imprimiendo').map((p) => p.nombre) : []
+            responder(dichos.queEstoyHaciendo({ sentadoMin, imprimiendo }))
+          })
+        break
+      }
+      case 'comoEstas':
+        responder(dichos.comoEstoy(nombre))
+        break
+      case 'quienSos':
+        responder(dichos.quienSoy())
+        break
+      case 'estasAhi':
+        responder(dichos.estoyAhi(nombre))
+        break
+      case 'saludo':
+        responder(dichos.saludoSegunHora(ahora.getHours(), nombre))
+        break
+      case 'cansado':
+        responder(dichos.estoyCansado())
+        break
+      case 'chiste':
+        responder(dichos.chiste())
+        break
+      case 'repetir':
+        responder(ultimaRespuesta.current || 'Todavía no dije nada.')
         break
     }
   }
@@ -514,7 +561,7 @@ export function App() {
       return
     }
     ejecutar(orden)
-    if (orden === 'chau') {
+    if (orden === 'chau' || orden === 'despedida') {
       if (timerAtento.current) window.clearTimeout(timerAtento.current)
       setOido('listo')
       setOyo('')

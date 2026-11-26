@@ -16,6 +16,7 @@ import type { Ciudad } from './lib/clima'
 import { aRemota, aplicarRemota, cargarPanel, guardarPanel, limpiarLlamadas, porDefecto, temaConfig, type Ajustes } from './lib/config'
 import { describirImpresoras, type InformeImpresoras } from './lib/impresoras'
 import { enviarNtfy } from './lib/ntfy'
+import { CATALOGO } from './lib/voz'
 
 function temaNuevo() {
   const b = new Uint8Array(12)
@@ -326,6 +327,22 @@ export function Panel() {
           <p className="chico">Necesita el modo USB (el servidor de la PC con el celu enchufado).</p>
         )}
       </section>
+
+      <details className="ajustes">
+        <summary>Qué le puedo decir a Nooby</summary>
+        <p className="chico">
+          Primero despertalo con tu frase ("che nooby…") y esperá a que diga "Sí, {a.nombre}". Después decí cualquiera de estas
+          (no hace falta que sean idénticas, entiende variantes):
+        </p>
+        <ul className="frases">
+          {CATALOGO.map((g) => (
+            <li key={g.orden}>
+              <strong>{g.titulo}</strong>
+              <span>{g.ejemplos.map((e) => `«${e}»`).join('  ')}</span>
+            </li>
+          ))}
+        </ul>
+      </details>
 
       <details className="ajustes">
         <summary>Avanzado y pruebas</summary>

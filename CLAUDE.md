@@ -40,6 +40,10 @@ Web app de una pantalla (Vite + React + TS) que se muestra en un celu viejo (Gal
 - Comentarios (`lib/comentarios.ts`, con tests): al irte tras 30 s–5 min sentado dice "¿Ya te vas? Trabajaste poco." (máx. 1 cada 10 min);
   al volver tras 2 min o más dice "¡Hola de nuevo! ¿Cómo estuvo el recreo? ¿Qué hacemos ahora?". No pisan una alarma de impresión.
 - Sonidos: solo la alarma de la impresión suena como alarma; clima/recordatorios/enojo no tienen "ding" (el enojo solo habla).
+- **Pedidos por voz**: `CATALOGO` en `lib/voz.ts` es la lista de todo lo que entiende (18 grupos: hora, fecha, clima, impresoras, cuánto llevás sentado, charla, chistes,
+  repetir, despedirse…). `interpretar()` es la primera regla que coincide (el orden importa); `tests/frases.test.ts` comprueba que CADA ejemplo del catálogo se entienda,
+  así la lista del panel ("Qué le puedo decir a Nooby") nunca miente. Respuestas en `lib/respuestas.ts` (puras; el azar se inyecta). Para agregar un pedido: regla en
+  `interpretar`, entrada en `CATALOGO`, caso en `ejecutar` de App.tsx.
 - **Entrenar la frase de despertar**: el modelo no conoce "nooby", así que se le enseña con tu voz. Panel > "3. Despertar a Nooby" > "Entrenar con mi voz":
   el servidor emite el evento SSE `entrenar`, el celu pide repetir la frase 5 veces (modo libre), anota lo que entiende el reconocedor
   (p. ej. "china vi") y lo guarda como `llamadas` en la config. Esas frases pasan a ser la gramática del modo llamado

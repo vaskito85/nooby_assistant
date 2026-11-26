@@ -36,6 +36,9 @@
 ## Hecho (v0.4.3)
 - [x] Foto de la impresora en el panel de la derecha junto con el aviso
 
+## Hecho (v0.4.4)
+- [x] Más frases por voz (fecha, charla, chistes, repetir, despedida…) + lista en el panel
+
 ## Pendiente
 - [ ] T019 El agente del taller tiene que mandar la foto (POST /api/foto) junto al aviso de terminó/falló
 - [ ] T018 El agente del taller (suite_impresion_3D) tiene que implementar docs/integracion-agente.md

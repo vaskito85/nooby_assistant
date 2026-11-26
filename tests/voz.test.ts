@@ -61,7 +61,7 @@ describe('interpretar', () => {
     expect(interpretar('que sabes hacer')).toBe('ayuda')
   })
   it('lo que no entiende da null', () => {
-    expect(interpretar('contame un chiste')).toBeNull()
+    expect(interpretar('poneme una pizza')).toBeNull()
     expect(interpretar('')).toBeNull()
   })
 })
