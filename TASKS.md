@@ -23,6 +23,9 @@
 ## Hecho (v0.3.2)
 - [x] Palabra clave con gramática cerrada (llamado/libre) y freno automático de la cámara
 
+## Hecho (v0.7.0)
+- [x] Panel rediseñado (menú lateral/en cuadrícula, tarjetas, estado general, interruptores) y modelo de Groq actualizado a openai/gpt-oss-120b con respaldo automático si un modelo deja de existir
+
 ## Hecho (v0.6.0)
 - [x] T010 Charla libre con IA (Groq): lo que no entiende por reglas va a la IA en la PC, con historial corto y herramientas (temporizador, recordatorio, agenda, clima, impresoras). Clave solo en el servidor, cargada desde el panel
 

@@ -47,9 +47,12 @@ export function BuscadorCiudad({
 
   return (
     <div className="buscador">
-      <label>
-        Ciudad para el clima: <strong>{actual}</strong>
+      <label className="pn-campo">
+        <span>
+          Ciudad para el clima: <strong>{actual}</strong>
+        </span>
         <input
+          className="pn-input"
           value={texto}
           onChange={(e) => setTexto(e.target.value)}
           placeholder="Escribí tu ciudad (ej: Bahía Blanca)"
@@ -57,8 +60,8 @@ export function BuscadorCiudad({
           autoCorrect="off"
         />
       </label>
-      {buscando && <p className="chico">Buscando…</p>}
-      {error && <p className="chico">{error}</p>}
+      {buscando && <p className="pn-ayuda">Buscando…</p>}
+      {error && <p className="pn-ayuda">{error}</p>}
       {resultados.length > 0 && (
         <ul className="sugerencias">
           {resultados.map((c) => (

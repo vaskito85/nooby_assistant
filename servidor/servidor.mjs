@@ -13,7 +13,7 @@ import { extname, join, normalize, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { GET as pedirCiudad } from '../api/ciudad.js'
 import { GET as pedirClima } from '../api/clima.js'
-import { charlar, describirCodigo, ErrorIA, ERRORES, limpiarMensajes, MODELO_POR_DEFECTO } from './ia.mjs'
+import { charlar, describirCodigo, ErrorIA, ERRORES, limpiarMensajes, MODELO_POR_DEFECTO, MODELOS_RETIRADOS } from './ia.mjs'
 
 const RAIZ = fileURLToPath(new URL('..', import.meta.url))
 const WEB = join(RAIZ, 'dist')
@@ -55,6 +55,8 @@ function guardar() {
 }
 
 const estado = cargar()
+// Un modelo que Groq ya retiró y quedó guardado se cambia solo por el actual.
+if (MODELOS_RETIRADOS.includes(estado.servidor.ia.modelo)) estado.servidor.ia.modelo = MODELO_POR_DEFECTO
 // Variables de entorno: pisan lo guardado, pero nunca se guardan en el archivo.
 const PUERTO = Number(process.env.NOOBY_PUERTO) || estado.servidor.puerto
 const ADB = process.env.NOOBY_ADB || estado.servidor.adb
@@ -731,7 +733,7 @@ async function manejar(req, res) {
     if (!claveIA()) return json(res, 200, { error: 'sin_clave', texto: ERRORES.sin_clave })
     if (!cupoLocalIA()) return json(res, 200, { error: 'cupo', texto: ERRORES.cupo })
     try {
-      const { texto } = await charlar({
+      const { texto, modelo: usado } = await charlar({
         clave: claveIA(),
         modelo: estado.servidor.ia.modelo,
         historial,
@@ -743,6 +745,12 @@ async function manejar(req, res) {
         },
         ejecutar: herramientaIA,
       })
+      if (usado && usado !== estado.servidor.ia.modelo) {
+        // El modelo guardado ya no existía y otro respondió: queda ese para la próxima.
+        estado.servidor.ia.modelo = usado
+        guardar()
+        console.log(`[ia] modelo cambiado a ${usado}`)
+      }
       return json(res, 200, { texto })
     } catch (e) {
       const tipo = e instanceof ErrorIA ? e.tipo : 'ia'

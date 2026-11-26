@@ -22,6 +22,8 @@ import { describirImpresoras, type InformeImpresoras } from './lib/impresoras'
 import { enviarNtfy } from './lib/ntfy'
 import { CATALOGO } from './lib/voz'
 
+type Seccion = 'inicio' | 'ajustes' | 'voz' | 'ia' | 'red' | 'frases' | 'avanzado'
+
 function temaNuevo() {
   const b = new Uint8Array(12)
   crypto.getRandomValues(b)
@@ -51,6 +53,12 @@ export function Panel() {
   const [claveIa, setClaveIa] = useState('')
   const [modeloIa, setModeloIa] = useState('')
   const [notaIa, setNotaIa] = useState('')
+  const [seccion, setSeccion] = useState<Seccion>(() => (sessionStorage.getItem('nooby-panel') as Seccion | null) ?? 'inicio')
+  const irA = (s: Seccion) => {
+    setSeccion(s)
+    sessionStorage.setItem('nooby-panel', s)
+    window.scrollTo({ top: 0 })
+  }
 
   // Detecta el modo y, si es local, trae la config guardada en la PC.
   useEffect(() => {
@@ -205,248 +213,402 @@ export function Panel() {
     window.setTimeout(() => setCopiado(false), 2000)
   }
 
+  const local = modo === 'local'
+  const celuOk = !!servidor && servidor.celus.length > 0
+  const caraAbierta = !!servidor && servidor.pantallas > 0
+  const segInforme = informe.ts == null ? null : Math.max(0, Math.round((Date.now() - informe.ts) / 1000))
+  const soloUsb = <p className="pn-ayuda">Esto necesita el modo USB (el servidor de la PC con el celu enchufado).</p>
+
+  const secciones: { id: Seccion; icono: string; nombre: string }[] = [
+    { id: 'inicio', icono: '🏠', nombre: 'Inicio' },
+    { id: 'ajustes', icono: '⚙️', nombre: 'Ajustes' },
+    { id: 'voz', icono: '🎙️', nombre: 'Despertar' },
+    { id: 'ia', icono: '✨', nombre: 'Charla IA' },
+    { id: 'red', icono: '🖨️', nombre: 'Impresoras' },
+    { id: 'frases', icono: '💬', nombre: 'Qué decirle' },
+    { id: 'avanzado', icono: '🧰', nombre: 'Avanzado' },
+  ]
+
+  const Estado = ({ ok, titulo, detalle, ir }: { ok: boolean | null; titulo: string; detalle: string; ir: Seccion }) => (
+    <button className="pn-estado" data-ok={ok === null ? 'neutro' : ok ? 'si' : 'no'} onClick={() => irA(ir)}>
+      <span className="pn-punto" aria-hidden />
+      <span className="pn-estado-texto">
+        <strong>{titulo}</strong>
+        <small>{detalle}</small>
+      </span>
+    </button>
+  )
+
   return (
-    <main className="app panel-pagina">
-      <h1>Panel de Nooby</h1>
-      <p className="chico">
-        Los ajustes se hacen acá, en la PC. El celu solo los recibe: no tiene que tocar nada.
-      </p>
+    <main className="pn">
+      <header className="pn-cabecera">
+        <div className="pn-logo" aria-hidden>
+          <span />
+          <span />
+        </div>
+        <div>
+          <h1>Nooby</h1>
+          <p>Panel de control · los ajustes se hacen acá y el celu los recibe solo</p>
+        </div>
+      </header>
 
-      {modo === 'local' ? (
-        <section className="ajustes">
-          <h2>1. El celu</h2>
-          {servidor && servidor.celus.length > 0 ? (
-            <p>
-              ✓ Celu conectado por USB ({servidor.celus.join(', ')}).{' '}
-              {servidor.pantallas > 0 ? 'La cara está abierta.' : 'Abrí la app Nooby en el celu.'}
-            </p>
-          ) : (
-            <p>
-              Sin celu por USB. Enchufalo con el cable y activá la <strong>depuración USB</strong> (Opciones de
-              desarrollador). Aparece solo cuando lo conectás.
-            </p>
-          )}
-          <p className="chico">
-            Los avisos de impresión van a <code>POST http://127.0.0.1:{servidor?.puerto}/api/aviso</code> con JSON{' '}
-            <code>{'{"texto":"..."}'}</code>.
-          </p>
-        </section>
-      ) : (
-        modo === 'ntfy' && (
-          <section className="ajustes">
-            <h2>1. Conectar el celu</h2>
-            <p className="chico">
-              Abrí este link <strong>una sola vez</strong> en el celu. Guarda el tema y desde ahí queda todo conectado.
-            </p>
-            <input readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
-            <button className="boton" onClick={copiar}>
-              {copiado ? 'Copiado ✓' : 'Copiar link'}
+      <div className="pn-cuerpo">
+        <nav className="pn-nav" aria-label="Secciones">
+          {secciones.map((s) => (
+            <button key={s.id} className="pn-nav-item" aria-current={seccion === s.id ? 'page' : undefined} onClick={() => irA(s.id)}>
+              <span className="pn-nav-icono" aria-hidden>
+                {s.icono}
+              </span>
+              <span>{s.nombre}</span>
             </button>
-            <p className="chico">
-              El link contiene el tema secreto: quien lo tenga puede mandarle avisos al celu. No lo publiques.
-            </p>
-          </section>
-        )
-      )}
-
-      <section className="ajustes">
-        <h2>2. Ajustes</h2>
-        <label>
-          Avisar sentado cada (min)
-          <input
-            type="number"
-            min={1}
-            value={a.sentadoMin}
-            onChange={(e) => cambiar('sentadoMin', Math.max(1, Number(e.target.value) || 60))}
-          />
-        </label>
-        <label>
-          Recordar agua cada (min, 0 = no)
-          <input
-            type="number"
-            min={0}
-            value={a.aguaMin}
-            onChange={(e) => cambiar('aguaMin', Math.max(0, Number(e.target.value) || 0))}
-          />
-        </label>
-        <label>
-          Cómo te llama (para "Sí, ...")
-          <input value={a.nombre} maxLength={30} onChange={(e) => cambiar('nombre', e.target.value)} />
-        </label>
-        <BuscadorCiudad actual={a.ciudad} alElegir={elegirCiudad} />
-        <label className="check">
-          <input type="checkbox" checked={a.voz} onChange={(e) => cambiar('voz', e.target.checked)} />
-          Hablar en voz alta
-        </label>
-        <button className="boton principal" onClick={enviar}>
-          {modo === 'local' ? 'Guardar y enviar al celu' : 'Enviar al celu'}
-        </button>
-        {estado && <p className="chico">{estado}</p>}
-      </section>
-
-      <section className="ajustes">
-        <h2>3. Despertar a Nooby</h2>
-        <p className="chico">
-          El modelo de voz no conoce la palabra "nooby", así que se la enseñás con tu voz: el celu te pide repetir la frase 5
-          veces y guarda cómo la entiende. Podés enseñarle más de una frase ("hola nooby", "nobby"…): escribila acá y volvé a
-          entrenar.
-        </p>
-        <label>
-          Frase para despertarlo
-          <input value={a.fraseLlamado} maxLength={40} onChange={(e) => cambiar('fraseLlamado', e.target.value)} />
-        </label>
-        {modo === 'local' ? (
-          <>
-            <button className="boton principal" onClick={entrenar}>
-              Entrenar con mi voz (en el celu)
-            </button>
-            {a.llamadas.length > 0 ? (
-              <>
-                <p className="chico">Lo que aprendió (tocá una para quitarla):</p>
-                <div className="fichas">
-                  {a.llamadas.map((v) => (
-                    <button key={v} className="ficha" onClick={() => void quitarVariante(v)} title="Quitar">
-                      «{v}» ✕
-                    </button>
-                  ))}
-                </div>
-                <button className="boton" onClick={() => void quitarVariante(null)}>
-                  Borrar todo lo aprendido
-                </button>
-              </>
-            ) : (
-              <p className="chico">Todavía no aprendió ninguna: por ahora despierta con "che nube" (lo más parecido que conoce).</p>
-            )}
-          </>
-        ) : (
-          <p className="chico">El entrenamiento necesita el modo USB (el servidor de la PC con el celu enchufado).</p>
-        )}
-      </section>
-
-      <section className="ajustes">
-        <h2>4. Conectar la Raspberry y otras máquinas</h2>
-        {modo === 'local' ? (
-          <>
-            <p className="chico">
-              Para que el agente de las impresoras (en otra máquina) le hable a Nooby hay que abrir el acceso por la red local.
-              Solo acepta avisos e informes de impresoras, y siempre con el token. Todo lo demás (este panel, tus ajustes) sigue
-              cerrado a la red.
-            </p>
-            <button className="boton" onClick={() => void cambiarRed({ lan: !red?.lan })}>
-              {red?.lan ? 'Cerrar el acceso desde la red' : 'Abrir el acceso desde la red'}
-            </button>
-            {red?.lan && (
-              <>
-                <p>
-                  Dirección: <code>http://{red.direcciones[0] ?? 'IP-DE-ESTA-PC'}:{red.puerto}</code>
-                </p>
-                <label>
-                  Token (encabezado <code>X-Token</code>)
-                  <input readOnly value={red.token} onFocus={(e) => e.currentTarget.select()} />
-                </label>
-                <button className="boton" onClick={() => void copiarToken()}>
-                  {copiadoToken ? 'Copiado ✓' : 'Copiar token'}
-                </button>
-                <button className="boton" onClick={() => void cambiarRed({ regenerarToken: true })}>
-                  Generar token nuevo (hay que cargarlo de nuevo en el otro agente)
-                </button>
-                <p className="chico">
-                  Si la PC cambia de IP, la dirección cambia: conviene fijarla en el router. Las instrucciones para el otro agente
-                  están en <code>docs/integracion-agente.md</code>.
-                </p>
-              </>
-            )}
-            <p className="chico">
-              Impresoras:{' '}
-              {informe.ts == null
-                ? 'todavía no llegó ningún informe.'
-                : `último informe hace ${Math.max(0, Math.round((Date.now() - informe.ts) / 1000))} s. ${describirImpresoras(informe, Date.now())}`}
-            </p>
-          </>
-        ) : (
-          <p className="chico">Necesita el modo USB (el servidor de la PC con el celu enchufado).</p>
-        )}
-      </section>
-
-      <section className="ajustes">
-        <h2>5. Charla libre (inteligencia artificial)</h2>
-        {modo === 'local' ? (
-          <>
-            <p className="chico">
-              Lo que Nooby no entiende por las frases fijas se lo pregunta a una IA (Groq, plan gratis), que además puede poner
-              temporizadores y recordatorios, ver el clima y las impresoras. La clave se guarda solo en esta PC: no pasa por el celu.
-              Sacala gratis en <code>console.groq.com</code> (API Keys).
-            </p>
-            <p>{ia?.configurada ? '✓ Hay una clave cargada.' : 'Todavía no hay clave: Nooby sigue con las frases fijas.'}</p>
-            <label>
-              Clave de Groq (empieza con gsk_)
-              <input
-                type="password"
-                autoComplete="off"
-                placeholder={ia?.configurada ? 'Pegá otra para reemplazarla' : 'gsk_…'}
-                value={claveIa}
-                onChange={(e) => setClaveIa(e.target.value)}
-              />
-            </label>
-            <label>
-              Modelo
-              <input value={modeloIa} maxLength={80} onChange={(e) => setModeloIa(e.target.value)} />
-            </label>
-            <button className="boton" onClick={() => void guardarClaveIa({ clave: claveIa, modelo: modeloIa })}>
-              Guardar
-            </button>
-            <button className="boton" disabled={!ia?.configurada} onClick={() => void probarIa()}>
-              Probar
-            </button>
-            {ia?.configurada && !ia.entorno && (
-              <button className="boton" onClick={() => void guardarClaveIa({ borrar: true })}>
-                Borrar la clave
-              </button>
-            )}
-            {notaIa && <p className="chico">{notaIa}</p>}
-          </>
-        ) : (
-          <p className="chico">Necesita el modo USB (el servidor de la PC con el celu enchufado).</p>
-        )}
-      </section>
-
-      <details className="ajustes">
-        <summary>Qué le puedo decir a Nooby</summary>
-        <p className="chico">
-          Primero despertalo con tu frase ("che nooby…") y esperá a que diga "Sí, {a.nombre}". Después decí cualquiera de estas
-          (no hace falta que sean idénticas, entiende variantes):
-        </p>
-        <ul className="frases">
-          {CATALOGO.map((g) => (
-            <li key={g.orden}>
-              <strong>{g.titulo}</strong>
-              <span>{g.ejemplos.map((e) => `«${e}»`).join('  ')}</span>
-            </li>
           ))}
-        </ul>
-      </details>
+        </nav>
 
-      <details className="ajustes">
-        <summary>Avanzado y pruebas</summary>
-        {modo === 'ntfy' && (
-          <>
-            <label>
-              Servidor ntfy
-              <input value={a.servidor} onChange={(e) => cambiar('servidor', e.target.value.trim())} />
-            </label>
-            <label>
-              Tema secreto
-              <input value={a.tema} onChange={(e) => cambiar('tema', e.target.value.trim())} />
-            </label>
-            <button className="boton" onClick={() => cambiar('tema', temaNuevo())}>
-              Generar tema nuevo (hay que volver a abrir el link en el celu)
-            </button>
-          </>
-        )}
-        <button className="boton" onClick={probar}>
-          Probar aviso de impresión en el celu
-        </button>
-      </details>
+        <div className="pn-contenido">
+          {seccion === 'inicio' && (
+            <>
+              <h2 className="pn-titulo">Cómo está todo</h2>
+              <div className="pn-estados">
+                {local ? (
+                  <Estado
+                    ok={celuOk ? caraAbierta : false}
+                    titulo="Celu"
+                    detalle={celuOk ? (caraAbierta ? 'Conectado y con la cara abierta' : 'Conectado: abrí la app Nooby') : 'Sin cable USB'}
+                    ir="inicio"
+                  />
+                ) : (
+                  <Estado ok={null} titulo="Celu" detalle="Se conecta con un link (modo internet)" ir="avanzado" />
+                )}
+                <Estado ok={local ? !!ia?.configurada : null} titulo="Charla con IA" detalle={ia?.configurada ? 'Lista para conversar' : 'Falta cargar la clave'} ir="ia" />
+                <Estado
+                  ok={segInforme == null ? false : segInforme < 600}
+                  titulo="Impresoras"
+                  detalle={segInforme == null ? 'Todavía no llegó ningún informe' : `Último informe hace ${segInforme < 90 ? `${segInforme} s` : `${Math.round(segInforme / 60)} min`}`}
+                  ir="red"
+                />
+                <Estado ok={local ? !!red?.lan : null} titulo="Acceso desde la red" detalle={red?.lan ? 'Abierto (con token)' : 'Cerrado'} ir="red" />
+                <Estado ok={a.llamadas.length > 0} titulo="Frase de despertar" detalle={a.llamadas.length > 0 ? `${a.llamadas.length} variantes aprendidas` : 'Sin entrenar'} ir="voz" />
+              </div>
+
+              {local ? (
+                <div className="pn-tarjeta">
+                  <h3>Conectar el celu</h3>
+                  {celuOk ? (
+                    <p>
+                      Celu conectado por USB ({servidor?.celus.join(', ')}). {caraAbierta ? 'La cara está abierta.' : 'Abrí la app Nooby en el celu.'}
+                    </p>
+                  ) : (
+                    <p>
+                      Enchufalo con el cable y activá la <strong>depuración USB</strong> (Opciones de desarrollador). Aparece solo cuando lo
+                      conectás.
+                    </p>
+                  )}
+                  <p className="pn-ayuda">
+                    Los avisos de impresión van a <code>POST http://127.0.0.1:{servidor?.puerto}/api/aviso</code> con JSON{' '}
+                    <code>{'{"texto":"..."}'}</code>.
+                  </p>
+                </div>
+              ) : (
+                modo === 'ntfy' && (
+                  <div className="pn-tarjeta">
+                    <h3>Conectar el celu</h3>
+                    <p>
+                      Abrí este link <strong>una sola vez</strong> en el celu. Guarda el tema y desde ahí queda todo conectado.
+                    </p>
+                    <input className="pn-input" readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
+                    <div className="pn-fila">
+                      <button className="pn-btn primario" onClick={copiar}>
+                        {copiado ? 'Copiado ✓' : 'Copiar link'}
+                      </button>
+                    </div>
+                    <p className="pn-ayuda">El link contiene el tema secreto: quien lo tenga puede mandarle avisos al celu. No lo publiques.</p>
+                  </div>
+                )
+              )}
+
+              <div className="pn-tarjeta">
+                <h3>Probar</h3>
+                <p>Mandale un aviso de prueba: tiene que sonar y aparecer en la cara del celu.</p>
+                <div className="pn-fila">
+                  <button className="pn-btn secundario" onClick={probar}>
+                    🔔 Probar aviso de impresión
+                  </button>
+                </div>
+                {estado && <p className="pn-nota">{estado}</p>}
+              </div>
+            </>
+          )}
+
+          {seccion === 'ajustes' && (
+            <>
+              <h2 className="pn-titulo">Ajustes</h2>
+              <div className="pn-tarjeta">
+                <h3>Recordatorios</h3>
+                <div className="pn-dos">
+                  <label className="pn-campo">
+                    <span>Avisar sentado cada (min)</span>
+                    <input
+                      className="pn-input"
+                      type="number"
+                      min={1}
+                      value={a.sentadoMin}
+                      onChange={(e) => cambiar('sentadoMin', Math.max(1, Number(e.target.value) || 60))}
+                    />
+                  </label>
+                  <label className="pn-campo">
+                    <span>Recordar agua cada (min, 0 = no)</span>
+                    <input
+                      className="pn-input"
+                      type="number"
+                      min={0}
+                      value={a.aguaMin}
+                      onChange={(e) => cambiar('aguaMin', Math.max(0, Number(e.target.value) || 0))}
+                    />
+                  </label>
+                </div>
+              </div>
+              <div className="pn-tarjeta">
+                <h3>Vos y tu ciudad</h3>
+                <label className="pn-campo">
+                  <span>Cómo te llama (para "Sí, …")</span>
+                  <input className="pn-input" value={a.nombre} maxLength={30} onChange={(e) => cambiar('nombre', e.target.value)} />
+                </label>
+                <BuscadorCiudad actual={a.ciudad} alElegir={elegirCiudad} />
+                <label className="pn-interruptor">
+                  <input type="checkbox" checked={a.voz} onChange={(e) => cambiar('voz', e.target.checked)} />
+                  <span className="pn-palanca" aria-hidden />
+                  <span>Hablar en voz alta</span>
+                </label>
+              </div>
+              <div className="pn-fila">
+                <button className="pn-btn primario grande" onClick={enviar}>
+                  {local ? 'Guardar y enviar al celu' : 'Enviar al celu'}
+                </button>
+              </div>
+              {estado && <p className="pn-nota">{estado}</p>}
+            </>
+          )}
+
+          {seccion === 'voz' && (
+            <>
+              <h2 className="pn-titulo">Despertar a Nooby</h2>
+              <div className="pn-tarjeta">
+                <p>
+                  El modelo de voz no conoce la palabra "nooby", así que se la enseñás con tu voz: el celu te pide repetir la frase 5 veces y
+                  guarda cómo la entiende. Podés enseñarle más de una frase ("hola nooby", "nobby"…): escribila y volvé a entrenar.
+                </p>
+                <label className="pn-campo">
+                  <span>Frase para despertarlo</span>
+                  <input className="pn-input" value={a.fraseLlamado} maxLength={40} onChange={(e) => cambiar('fraseLlamado', e.target.value)} />
+                </label>
+                {local ? (
+                  <>
+                    <div className="pn-fila">
+                      <button className="pn-btn primario" onClick={entrenar}>
+                        🎙️ Entrenar con mi voz (en el celu)
+                      </button>
+                    </div>
+                    {estado && <p className="pn-nota">{estado}</p>}
+                  </>
+                ) : (
+                  soloUsb
+                )}
+              </div>
+              {local && (
+                <div className="pn-tarjeta">
+                  <h3>Lo que aprendió</h3>
+                  {a.llamadas.length > 0 ? (
+                    <>
+                      <p className="pn-ayuda">Tocá una para quitarla.</p>
+                      <div className="pn-fichas">
+                        {a.llamadas.map((v) => (
+                          <button key={v} className="pn-ficha" onClick={() => void quitarVariante(v)} title="Quitar">
+                            «{v}» ✕
+                          </button>
+                        ))}
+                      </div>
+                      <div className="pn-fila">
+                        <button className="pn-btn peligro" onClick={() => void quitarVariante(null)}>
+                          Borrar todo lo aprendido
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <p>Todavía no aprendió ninguna: por ahora despierta con "che nube" (lo más parecido que conoce).</p>
+                  )}
+                </div>
+              )}
+              <p className="pn-ayuda">Acordate de tocar «Guardar y enviar al celu» en Ajustes si cambiaste la frase.</p>
+            </>
+          )}
+
+          {seccion === 'ia' && (
+            <>
+              <h2 className="pn-titulo">Charla libre con inteligencia artificial</h2>
+              {local ? (
+                <>
+                  <div className="pn-tarjeta">
+                    <p>
+                      Lo que Nooby no entiende por las frases fijas se lo pregunta a una IA (Groq, plan gratis). Además puede poner
+                      temporizadores y recordatorios, ver el clima y las impresoras. La clave se guarda solo en esta PC: no pasa por el celu.
+                    </p>
+                    <p className="pn-ayuda">
+                      Sacá una clave gratis en <code>console.groq.com</code> → API Keys.
+                    </p>
+                    <p className="pn-insignia" data-ok={ia?.configurada ? 'si' : 'no'}>
+                      {ia?.configurada ? '✓ Hay una clave cargada' : 'Todavía no hay clave: Nooby sigue con las frases fijas'}
+                    </p>
+                  </div>
+                  <div className="pn-tarjeta">
+                    <label className="pn-campo">
+                      <span>Clave de Groq (empieza con gsk_)</span>
+                      <input
+                        className="pn-input"
+                        type="password"
+                        autoComplete="off"
+                        placeholder={ia?.configurada ? 'Pegá otra para reemplazarla' : 'gsk_…'}
+                        value={claveIa}
+                        onChange={(e) => setClaveIa(e.target.value)}
+                      />
+                    </label>
+                    <label className="pn-campo">
+                      <span>Modelo</span>
+                      <input className="pn-input" value={modeloIa} maxLength={80} onChange={(e) => setModeloIa(e.target.value)} />
+                    </label>
+                    <div className="pn-fila">
+                      <button className="pn-btn primario" onClick={() => void guardarClaveIa({ clave: claveIa, modelo: modeloIa })}>
+                        Guardar
+                      </button>
+                      <button className="pn-btn secundario" disabled={!ia?.configurada} onClick={() => void probarIa()}>
+                        Probar
+                      </button>
+                      {ia?.configurada && !ia.entorno && (
+                        <button className="pn-btn peligro" onClick={() => void guardarClaveIa({ borrar: true })}>
+                          Borrar la clave
+                        </button>
+                      )}
+                    </div>
+                    {notaIa && <p className="pn-nota">{notaIa}</p>}
+                  </div>
+                </>
+              ) : (
+                <div className="pn-tarjeta">{soloUsb}</div>
+              )}
+            </>
+          )}
+
+          {seccion === 'red' && (
+            <>
+              <h2 className="pn-titulo">Impresoras y otras máquinas</h2>
+              {local ? (
+                <>
+                  <div className="pn-tarjeta">
+                    <h3>Estado de las impresoras</h3>
+                    <p>
+                      {informe.ts == null
+                        ? 'Todavía no llegó ningún informe.'
+                        : `Último informe hace ${segInforme} s. ${describirImpresoras(informe, Date.now())}`}
+                    </p>
+                  </div>
+                  <div className="pn-tarjeta">
+                    <h3>Acceso desde la red</h3>
+                    <p>
+                      Para que el agente de las impresoras (en otra máquina) le hable a Nooby hay que abrir el acceso por la red local. Solo
+                      acepta avisos e informes de impresoras, y siempre con el token. Todo lo demás (este panel, tus ajustes) sigue cerrado.
+                    </p>
+                    <label className="pn-interruptor">
+                      <input type="checkbox" checked={!!red?.lan} onChange={() => void cambiarRed({ lan: !red?.lan })} />
+                      <span className="pn-palanca" aria-hidden />
+                      <span>{red?.lan ? 'Abierto a la red local' : 'Cerrado (solo esta PC)'}</span>
+                    </label>
+                    {red?.lan && (
+                      <>
+                        <p>
+                          Dirección: <code>http://{red.direcciones[0] ?? 'IP-DE-ESTA-PC'}:{red.puerto}</code>
+                        </p>
+                        <label className="pn-campo">
+                          <span>
+                            Token (encabezado <code>X-Token</code>)
+                          </span>
+                          <input className="pn-input" readOnly value={red.token} onFocus={(e) => e.currentTarget.select()} />
+                        </label>
+                        <div className="pn-fila">
+                          <button className="pn-btn secundario" onClick={() => void copiarToken()}>
+                            {copiadoToken ? 'Copiado ✓' : 'Copiar token'}
+                          </button>
+                          <button className="pn-btn peligro" onClick={() => void cambiarRed({ regenerarToken: true })}>
+                            Generar token nuevo
+                          </button>
+                        </div>
+                        <p className="pn-ayuda">
+                          Con un token nuevo hay que cargarlo de nuevo en el otro agente. Si la PC cambia de IP, la dirección cambia: conviene
+                          fijarla en el router. Instrucciones para el otro agente: <code>docs/integracion-agente.md</code>.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="pn-tarjeta">{soloUsb}</div>
+              )}
+            </>
+          )}
+
+          {seccion === 'frases' && (
+            <>
+              <h2 className="pn-titulo">Qué le puedo decir a Nooby</h2>
+              <div className="pn-tarjeta">
+                <p>
+                  Primero despertalo con tu frase ("che nooby…") y esperá a que diga "Sí, {a.nombre}". Después decí cualquiera de estas (no
+                  hace falta que sean idénticas, entiende variantes). Si no entiende, se lo pregunta a la IA.
+                </p>
+              </div>
+              <div className="pn-frases">
+                {CATALOGO.map((g) => (
+                  <div key={g.orden} className="pn-frase">
+                    <strong>{g.titulo}</strong>
+                    <span>{g.ejemplos.map((e) => `«${e}»`).join('  ')}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {seccion === 'avanzado' && (
+            <>
+              <h2 className="pn-titulo">Avanzado</h2>
+              <div className="pn-tarjeta">
+                <h3>Pruebas</h3>
+                <div className="pn-fila">
+                  <button className="pn-btn secundario" onClick={probar}>
+                    🔔 Probar aviso de impresión en el celu
+                  </button>
+                </div>
+                {estado && <p className="pn-nota">{estado}</p>}
+              </div>
+              {modo === 'ntfy' && (
+                <div className="pn-tarjeta">
+                  <h3>Modo internet (ntfy)</h3>
+                  <label className="pn-campo">
+                    <span>Servidor ntfy</span>
+                    <input className="pn-input" value={a.servidor} onChange={(e) => cambiar('servidor', e.target.value.trim())} />
+                  </label>
+                  <label className="pn-campo">
+                    <span>Tema secreto</span>
+                    <input className="pn-input" value={a.tema} onChange={(e) => cambiar('tema', e.target.value.trim())} />
+                  </label>
+                  <div className="pn-fila">
+                    <button className="pn-btn peligro" onClick={() => cambiar('tema', temaNuevo())}>
+                      Generar tema nuevo (hay que volver a abrir el link en el celu)
+                    </button>
+                  </div>
+                </div>
+              )}
+              {local && <p className="pn-ayuda">Servidor Nooby {servidor?.version} · puerto {servidor?.puerto}</p>}
+            </>
+          )}
+        </div>
+      </div>
     </main>
   )
 }

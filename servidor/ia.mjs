@@ -2,7 +2,11 @@
 // Vive en el servidor de la PC: la clave nunca llega al celu. Este módulo no toca el disco ni la red por su cuenta:
 // recibe `fetchFn` y `ejecutar` (las herramientas) para poder probarlo sin internet.
 
-export const MODELO_POR_DEFECTO = 'llama-3.3-70b-versatile'
+export const MODELO_POR_DEFECTO = 'openai/gpt-oss-120b'
+/** Si el modelo elegido ya no existe (Groq los va retirando), se prueban estos en orden. */
+export const MODELOS_ALTERNATIVOS = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b']
+/** Modelos que Groq ya dio de baja: si quedaron guardados se reemplazan solos. */
+export const MODELOS_RETIRADOS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']
 export const URL_GROQ = 'https://api.groq.com/openai/v1/chat/completions'
 const MAX_VUELTAS = 4
 const MAX_MENSAJES = 12
@@ -169,22 +173,38 @@ async function pedir({ fetchFn, clave, modelo, mensajes, herramientas = true }) 
 export async function charlar({ clave, modelo, historial, contexto, ejecutar, fetchFn = fetch }) {
   if (!clave) throw new ErrorIA('sin_clave')
   const msgs = [{ role: 'system', content: instrucciones(contexto) }, ...historial]
+  let modeloUsado = modelo || MODELO_POR_DEFECTO
+  let ultimoError = null
   for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
-    const base = { fetchFn, clave, modelo: modelo || MODELO_POR_DEFECTO, mensajes: msgs }
     let m
-    try {
-      m = await pedir(base)
-    } catch (e) {
-      // Algunos modelos fallan al armar una llamada a herramienta (HTTP 400): ese turno se contesta sin herramientas.
-      if (e instanceof ErrorIA && e.tipo === 'ia' && /HTTP 400/.test(e.detalle)) m = await pedir({ ...base, herramientas: false })
-      else throw e
+    for (const candidato of [modelo || MODELO_POR_DEFECTO, ...MODELOS_ALTERNATIVOS.filter((x) => x !== modelo)].filter((x, i, v) => v.indexOf(x) === i)) {
+      const base = { fetchFn, clave, modelo: candidato, mensajes: msgs }
+      try {
+        try {
+          m = await pedir(base)
+        } catch (e) {
+          // Algunos modelos fallan al armar una llamada a herramienta (HTTP 400): ese turno se contesta sin herramientas.
+          if (e instanceof ErrorIA && e.tipo === 'ia' && /HTTP 400/.test(e.detalle)) m = await pedir({ ...base, herramientas: false })
+          else throw e
+        }
+        modeloUsado = candidato
+        break
+      } catch (e) {
+        // 404 = ese modelo no existe (o la cuenta no tiene acceso): se prueba el siguiente.
+        if (e instanceof ErrorIA && e.tipo === 'ia' && /HTTP 404/.test(e.detalle)) {
+          ultimoError = e
+          continue
+        }
+        throw e
+      }
     }
+    if (m === undefined) throw ultimoError ?? new ErrorIA('ia')
     if (!m) throw new ErrorIA('ia')
     const llamadas = Array.isArray(m.tool_calls) ? m.tool_calls : []
     if (llamadas.length === 0) {
       const texto = limpiarRespuesta(m.content)
       if (!texto) throw new ErrorIA('ia')
-      return { texto }
+      return { texto, modelo: modeloUsado }
     }
     msgs.push({ role: 'assistant', content: m.content ?? '', tool_calls: llamadas })
     for (const l of llamadas) {

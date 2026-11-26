@@ -150,6 +150,21 @@ describe('charlar', () => {
     expect(cuerpos[1].tools).toBeUndefined()
   })
 
+  it('si el modelo ya no existe (404), prueba otro y avisa cuál funcionó', async () => {
+    const modelos: string[] = []
+    const fetchFn = async (_u: string, init: { body: string }) => {
+      const m = JSON.parse(init.body).model as string
+      modelos.push(m)
+      if (m === 'viejo-retirado') return { ok: false, status: 404, text: async () => '{"error":{"message":"The model does not exist"}}', json: async () => ({}) }
+      return { ok: true, status: 200, text: async () => '', json: async () => ({ choices: [{ message: { content: 'Hola.' } }] }) }
+    }
+    const r = await charlar({ clave: 'k', modelo: 'viejo-retirado', historial, contexto: ctx, ejecutar: async () => ({}), fetchFn })
+    expect(r.texto).toBe('Hola.')
+    expect(modelos[0]).toBe('viejo-retirado')
+    expect(r.modelo).toBe(modelos[1])
+    expect(r.modelo).not.toBe('viejo-retirado')
+  })
+
   it('un error HTTP trae el detalle que dijo la API', async () => {
     const fetchFn = async () => ({ ok: false, status: 404, text: async () => '{"error":{"message":"The model does not exist"}}', json: async () => ({}) })
     await expect(charlar({ clave: 'k', historial, contexto: ctx, ejecutar: async () => ({}), fetchFn })).rejects.toMatchObject({
