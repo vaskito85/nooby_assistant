@@ -1,4 +1,4 @@
-export type Humor = 'normal' | 'feliz' | 'dormido' | 'alerta' | 'hablando' | 'enojado'
+export type Humor = 'normal' | 'feliz' | 'dormido' | 'alerta' | 'hablando' | 'enojado' | 'atento'
 
 /**
  * La cara. Todo está en posiciones fijas dentro de un cuadro de proporción fija: ningún gesto cambia el

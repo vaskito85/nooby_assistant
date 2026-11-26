@@ -30,6 +30,12 @@ Web app de una pantalla (Vite + React + TS) que se muestra en un celu viejo (Gal
   proporción fija con ojos/boca en posición absoluta: ningún gesto cambia tamaños, así nada se corre. Info = estado / mensaje / botones.
 - Los ojos siguen la cara detectada (`lib/mirada.ts`, ~8 lecturas/s, suavizado por cuadro, escribe --gx/--gy) y el dedo; 4 toques en 5 s
   sobre la cara la enojan. Cada 60 s (y cuando cambia la conexión) aparece un globito pensador con una PC y ✓ verde / ✗ roja.
+- **Oído (v0.3)**: el APK escucha con Vosk (offline, español; el modelo va en assets/model-es y lo baja el CI) y solo pasa TEXTO a la
+  web (evento `nooby-oyo`, {text|partial}). Toda la lógica vive en la web (`lib/voz.ts`, con tests): "che nooby" (escrito como suena:
+  nubi/nuvi/nuby…), "Sí, <nombre>", y comandos fijos (clima, hora, cuánto llevo sentado, ya me levanté, agua, gracias, ayuda).
+  Mientras habla el TTS el micrófono se pausa (si no se oiría a sí mismo). `window.__noobyDebug.oido` guarda lo último que entendió.
+  Etapa 2 pendiente: preguntas libres con una IA (la clave quedaría en el servidor de la PC, nunca en el celu).
+- Sonidos: solo la alarma de la impresión suena como alarma; clima/recordatorios/enojo no tienen "ding" (el enojo solo habla).
 - Depurar el celu: `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>` + CDP; `window.__noobyDebug` trae ciclos, cuadros,
   conCara, msInferencia. La app del celu solo se reinstala si cambia su versionName (si no, se pierden los permisos).
 

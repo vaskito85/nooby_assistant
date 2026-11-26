@@ -324,6 +324,29 @@ body {
   }
 }
 
+/* atento (te escucha): ojos un poco más grandes y brillantes, boca chica */
+.cara[data-humor='atento'] .ojo {
+  scale: 1.08 1.08;
+  animation: none;
+  box-shadow: 0 0 60px #5eead466;
+}
+.cara[data-humor='atento'] .boca {
+  width: 10%;
+  height: 7%;
+}
+.escuchando {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 1.1rem;
+  color: var(--ojo);
+}
+.escuchando .oyo {
+  color: var(--suave);
+  font-size: 0.95rem;
+  font-style: italic;
+}
+
 /* enojado: ojos achatados naranjas con cejas en V y boca triste */
 .cara[data-humor='enojado'] .ojo {
   position: relative;

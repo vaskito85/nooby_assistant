@@ -10,8 +10,8 @@ android {
         applicationId = "com.nooby.asistente"
         minSdk = 24
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.2.2"
+        versionCode = 4
+        versionName = "0.3.0"
     }
 
     buildTypes {
@@ -24,4 +24,10 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    // Reconocimiento de voz offline (Apache-2.0). El modelo en español va en assets/model-es (lo baja el CI).
+    implementation("com.alphacephei:vosk-android:0.3.47")
+    implementation("net.java.dev.jna:jna:5.13.0@aar")
 }

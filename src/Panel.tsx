@@ -167,6 +167,10 @@ export function Panel() {
             onChange={(e) => cambiar('aguaMin', Math.max(0, Number(e.target.value) || 0))}
           />
         </label>
+        <label>
+          Cómo te llama (para "Sí, ...")
+          <input value={a.nombre} maxLength={30} onChange={(e) => cambiar('nombre', e.target.value)} />
+        </label>
         <BuscadorCiudad actual={a.ciudad} alElegir={elegirCiudad} />
         <label className="check">
           <input type="checkbox" checked={a.voz} onChange={(e) => cambiar('voz', e.target.checked)} />

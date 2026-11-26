@@ -16,6 +16,8 @@ export interface Ajustes {
   lon: number
   /** Hablar en voz alta además del sonido. */
   voz: boolean
+  /** Cómo te llama ("Sí, Ger"). */
+  nombre: string
 }
 
 /** Lo que viaja de la PC al celu (todo menos servidor y tema, que el celu ya conoce). */
@@ -33,6 +35,7 @@ export const porDefecto: Ajustes = {
   lat: -38.72,
   lon: -62.27,
   voz: true,
+  nombre: 'Ger',
 }
 
 /** Tema de configuración: va en un canal aparte para no mezclarse con las alarmas. */
@@ -78,6 +81,7 @@ export function aRemota(a: Ajustes): ConfigRemota {
     lat: a.lat,
     lon: a.lon,
     voz: a.voz,
+    nombre: a.nombre,
   }
 }
 
@@ -96,5 +100,6 @@ export function aplicarRemota(actual: Ajustes, crudo: unknown): Ajustes {
     lat: num(c.lat, -90, 90, actual.lat),
     lon: num(c.lon, -180, 180, actual.lon),
     voz: typeof c.voz === 'boolean' ? c.voz : actual.voz,
+    nombre: typeof c.nombre === 'string' && c.nombre.trim() && c.nombre.length <= 30 ? c.nombre.trim() : actual.nombre,
   }
 }

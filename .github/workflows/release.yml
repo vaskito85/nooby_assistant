@@ -36,6 +36,16 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Bajar el modelo de voz en español (Vosk, Apache-2.0)
+        run: |
+          curl -fsSL -o modelo.zip https://alphacephei.com/vosk/models/vosk-model-small-es-0.42.zip
+          unzip -q modelo.zip -d modelo-tmp
+          mkdir -p android/app/src/main/assets
+          mv modelo-tmp/vosk-model-small-es-0.42 android/app/src/main/assets/model-es
+          # StorageService.unpack de Vosk necesita este archivo para saber si ya copió el modelo
+          cat /proc/sys/kernel/random/uuid > android/app/src/main/assets/model-es/uuid
+          du -sh android/app/src/main/assets/model-es
+
       - name: Compilar el APK
         working-directory: android
         run: gradle --no-daemon assembleDebug

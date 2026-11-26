@@ -22,7 +22,7 @@ const PAQUETE = 'com.nooby.asistente'
 
 // ---------- configuración ----------
 const porDefecto = {
-  config: { sentadoMin: 60, aguaMin: 45, ciudad: 'Bahía Blanca', lat: -38.72, lon: -62.27, voz: true },
+  config: { sentadoMin: 60, aguaMin: 45, ciudad: 'Bahía Blanca', lat: -38.72, lon: -62.27, voz: true, nombre: 'Ger' },
   servidor: {
     puerto: 8777,
     /** '127.0.0.1' = solo esta PC. '0.0.0.0' = también la red local (entonces /api/aviso pide token). */
@@ -68,6 +68,7 @@ function validarConfig(c, actual) {
     lat: num(c.lat, -90, 90, actual.lat),
     lon: num(c.lon, -180, 180, actual.lon),
     voz: typeof c.voz === 'boolean' ? c.voz : actual.voz,
+    nombre: typeof c.nombre === 'string' && c.nombre.trim() && c.nombre.length <= 30 ? c.nombre.trim() : actual.nombre,
   }
 }
 

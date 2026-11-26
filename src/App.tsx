@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'rea
 import { Cara, type Humor } from './Cara'
 import { Pensamiento } from './Pensamiento'
 import { Mirada } from './lib/mirada'
+import { detectarLlamado, interpretar, type Orden } from './lib/voz'
 import { callar, desbloquear, hablar, sonar, type Sonido } from './lib/audio'
 import { frase, pedirClima } from './lib/clima'
 import { aplicarRemota, cargarAjustes, guardarAjustes, temaConfig, type Ajustes } from './lib/config'
@@ -13,7 +14,7 @@ import { Sentado } from './lib/sentado'
 declare global {
   interface Window {
     /** Contadores internos del detector, para depurar desde chrome://inspect. */
-    __noobyDebug?: Record<string, number>
+    __noobyDebug?: Record<string, unknown>
   }
 }
 
@@ -54,6 +55,9 @@ export function App() {
   const [enojado, setEnojado] = useState(false)
   const [ausenteLargo, setAusenteLargo] = useState(false)
   const [pensando, setPensando] = useState(false)
+  // Oído: 'sin' = no disponible (navegador común); 'listo' = esperando "che nooby"; 'atento' = ya respondió y escucha el pedido
+  const [oido, setOido] = useState<'sin' | 'listo' | 'atento'>('sin')
+  const [oyo, setOyo] = useState('')
   const [ntfyOk, setNtfyOk] = useState<boolean | null>(null)
   const [modo, setModo] = useState<'detectando' | 'local' | 'ntfy'>('detectando')
   const [nota, setNota] = useState('')
@@ -75,6 +79,10 @@ export function App() {
   const ultimaVista = useRef(0)
   const visibleAntes = useRef(false)
   const toques = useRef<number[]>([])
+  const oidoRef = useRef(oido)
+  oidoRef.current = oido
+  const alOirRef = useRef<(d: { text?: string; partial?: string }) => void>(() => {})
+  const timerAtento = useRef<number | null>(null)
   const mirada = useRef<Mirada | null>(null)
   const dedoActivo = useRef(false)
   const timerDedo = useRef<number | null>(null)
@@ -95,14 +103,21 @@ export function App() {
   }, [])
 
   const lanzarAviso = useCallback(
-    (texto: string, sonido: Sonido, insistir: boolean) => {
+    (texto: string, sonido: Sonido, insistir: boolean, opciones: { cerrarEn?: number; forzarVoz?: boolean } = {}) => {
       cortarAlarma()
       setAviso({ texto, sonido })
-      sonar(sonido)
-      if (ajustesRef.current.voz) {
+      const habla = opciones.forzarVoz || ajustesRef.current.voz
+      // Solo la alarma de la impresión suena como alarma. Todo lo demás se dice en voz alta, sin "ding" antes;
+      // si la voz está apagada, suena la campanita para que el aviso no pase en silencio.
+      if (sonido === 'alarma' || !habla) sonar(sonido)
+      if (habla) {
         setHablando(true)
         hablar(texto)
-        window.setTimeout(() => setHablando(false), 2500)
+        // La boca se mueve mientras habla: en el APK el fin lo avisa el motor de voz; si no, se estima por el largo del texto.
+        window.setTimeout(() => setHablando(false), Math.max(2500, texto.length * 75))
+      }
+      if (opciones.cerrarEn) {
+        window.setTimeout(() => setAviso((a) => (a?.texto === texto ? null : a)), opciones.cerrarEn)
       }
       if (insistir) {
         let veces = 0
@@ -329,18 +344,140 @@ export function App() {
 
   useEffect(() => () => presencia.current?.detener(), [])
 
-  const verClima = async () => {
+  const verClima = async (opciones: { cerrarEn?: number; forzarVoz?: boolean } = {}) => {
     const { lat, lon, ciudad } = ajustesRef.current
     setNota('Mirando el cielo…')
     try {
       const c = await pedirClima(lat, lon)
       setNota('')
-      lanzarAviso(frase(c, ciudad), 'suave', false)
+      lanzarAviso(frase(c, ciudad), 'suave', false, opciones)
     } catch (e) {
       const detalle = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
       setNota(`No pude traer el clima (${detalle}).`)
     }
   }
+
+  // ---------- voz: "che nooby" + pedidos ----------
+  const mantenerAtento = (ms = 10_000) => {
+    if (timerAtento.current) window.clearTimeout(timerAtento.current)
+    timerAtento.current = window.setTimeout(() => {
+      setOido((o) => (o === 'atento' ? 'listo' : o))
+      setOyo('')
+    }, ms)
+  }
+
+  const responder = (texto: string) => lanzarAviso(texto, 'suave', false, { cerrarEn: 12_000, forzarVoz: true })
+
+  const ejecutar = (orden: Orden) => {
+    const { nombre } = ajustesRef.current
+    const ahora = new Date()
+    switch (orden) {
+      case 'clima':
+        void verClima({ cerrarEn: 15_000, forzarVoz: true })
+        break
+      case 'hora': {
+        const h = ahora.getHours()
+        const m = ahora.getMinutes()
+        responder(m === 0 ? `Son las ${h} en punto.` : `Son las ${h} y ${m}.`)
+        break
+      }
+      case 'tiempoSentado':
+        responder(
+          sentado.current.sentadoMs > 0
+            ? `Llevás ${minutos(sentado.current.sentadoMs)} minutos sentado, ${nombre}.`
+            : 'No te veo sentado ahora.',
+        )
+        break
+      case 'levante':
+        sentado.current.descansar()
+        agua.current.descansar()
+        setSentadoMin(0)
+        responder('Perfecto, contador en cero.')
+        break
+      case 'agua':
+        agua.current.descansar()
+        responder(`Muy bien, ${nombre}. Hay que tomar agua.`)
+        break
+      case 'chau':
+        responder('De nada.')
+        break
+      case 'ayuda':
+        responder('Podés pedirme el clima, la hora, cuánto llevás sentado, o decirme que ya te levantaste o tomaste agua.')
+        break
+    }
+  }
+
+  const despertar = () => {
+    setOido('atento')
+    lanzarAviso(`Sí, ${ajustesRef.current.nombre}`, 'suave', false, { cerrarEn: 6000, forzarVoz: true })
+    mantenerAtento(12_000)
+  }
+
+  const atender = (texto: string) => {
+    const orden = interpretar(texto)
+    if (!orden) {
+      responder('No te entendí. Probá con el clima o la hora.')
+      mantenerAtento()
+      return
+    }
+    ejecutar(orden)
+    if (orden === 'chau') {
+      if (timerAtento.current) window.clearTimeout(timerAtento.current)
+      setOido('listo')
+      setOyo('')
+    } else {
+      mantenerAtento()
+    }
+  }
+
+  // Lo que oye el celu llega como texto (el APK solo hace de micrófono): acá se decide qué hacer.
+  alOirRef.current = (d) => {
+    const final = typeof d?.text === 'string'
+    const texto = (final ? d.text : d?.partial) ?? ''
+    if (!texto) return
+    const dbg = window.__noobyDebug ?? (window.__noobyDebug = {})
+    const previos = (dbg.oido as string[] | undefined) ?? []
+    if (final) dbg.oido = [...previos, texto].slice(-15) // para ver cómo entiende "che nooby" y ajustar
+    if (oidoRef.current === 'atento') {
+      setOyo(texto)
+      mantenerAtento() // mientras habla, no se duerme
+    }
+    if (!final) return
+    const llamado = detectarLlamado(texto)
+    if (oidoRef.current === 'listo') {
+      if (!llamado.llamado) return
+      if (interpretar(llamado.resto)) {
+        setOido('atento')
+        atender(llamado.resto) // "che nooby, qué hora es" todo junto: responde directo
+      } else {
+        despertar()
+      }
+    } else if (oidoRef.current === 'atento') {
+      if (llamado.llamado && !interpretar(llamado.resto)) despertar()
+      else atender(llamado.llamado ? llamado.resto : texto)
+    }
+  }
+
+  useEffect(() => {
+    const alOyo = (e: Event) => alOirRef.current((e as CustomEvent).detail)
+    const alListo = () => setOido((o) => (o === 'sin' ? 'listo' : o))
+    const alError = (e: Event) => setNota(`Sin oído: ${String((e as CustomEvent).detail)}`)
+    const alFinHabla = () => {
+      setHablando(false)
+      if (oidoRef.current === 'atento') mantenerAtento() // la cuenta de espera arranca cuando termina de hablar
+    }
+    window.addEventListener('nooby-oyo', alOyo)
+    window.addEventListener('nooby-oido-listo', alListo)
+    window.addEventListener('nooby-oido-error', alError)
+    window.addEventListener('nooby-hablo-fin', alFinHabla)
+    return () => {
+      window.removeEventListener('nooby-oyo', alOyo)
+      window.removeEventListener('nooby-oido-listo', alListo)
+      window.removeEventListener('nooby-oido-error', alError)
+      window.removeEventListener('nooby-hablo-fin', alFinHabla)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Toques sobre la cara: hasta 3 seguidos le dan gracia; el 4º en 5 s la enoja.
   const alTocarCara = () => {
@@ -349,7 +486,6 @@ export function App() {
     if (toques.current.length > TOQUES_PARA_ENOJARSE) {
       toques.current = []
       setEnojado(true)
-      sonar('alarma')
       if (ajustesRef.current.voz) hablar(RETOS[Math.floor(Math.random() * RETOS.length)])
       if (timerEnojo.current) window.clearTimeout(timerEnojo.current)
       timerEnojo.current = window.setTimeout(() => setEnojado(false), ENOJO_MS)
@@ -375,13 +511,15 @@ export function App() {
       ? 'alerta'
       : enojado
         ? 'enojado'
-        : hablando || aviso
+        : hablando
           ? 'hablando'
-          : mimo || saludo
-            ? 'feliz'
-            : conCamara && ausenteLargo
-              ? 'dormido'
-              : 'normal'
+          : oido === 'atento'
+            ? 'atento'
+            : mimo || saludo
+              ? 'feliz'
+              : conCamara && ausenteLargo
+                ? 'dormido'
+                : 'normal'
 
   const enlaceOk = ntfyOk === true
 
@@ -429,6 +567,11 @@ export function App() {
                     Entendido
                   </button>
                 </div>
+              ) : oido === 'atento' ? (
+                <p className="nota escuchando">
+                  Escuchando…
+                  {oyo && <span className="oyo">«{oyo}»</span>}
+                </p>
               ) : (
                 nota && <p className="nota">{nota}</p>
               )}
