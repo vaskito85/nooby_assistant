@@ -169,7 +169,11 @@ try {
       }
       if ($serial -and $instalada -and $versionApk -and ($instalada -eq $versionApk)) {
         Ok "La app del celu ya es la versión ${instalada}: no hace falta reinstalarla (conserva sus permisos)"
+        # Se reinicia la app para que cargue la web nueva que acaba de instalarse en la PC.
+        & $adb -s $serial shell am force-stop com.nooby.asistente | Out-Null
+        Start-Sleep -Milliseconds 800
         & $adb -s $serial shell am start -n com.nooby.asistente/.MainActivity | Out-Null
+        Ok 'App del celu reiniciada con la versión nueva'
       }
       elseif ($serial) {
         Write-Host "    Instalando en $serial (el celu puede pedir confirmación) ..."

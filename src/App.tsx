@@ -266,6 +266,14 @@ export function App() {
   // Canal local: avisos y ajustes llegan por el cable desde el servidor de la PC.
   useEffect(() => {
     if (modo !== 'local') return
+    // Si la conexión con la PC se corta y vuelve (p. ej. se actualizó el servidor), se recarga la página
+    // para tomar la versión nueva de la web.
+    let huboCorte = false
+    const estadoEnlace = (ok: boolean) => {
+      setNtfyOk(ok)
+      if (!ok) huboCorte = true
+      else if (huboCorte) location.reload()
+    }
     return conectarLocal(
       (texto) => lanzarAviso(texto, 'alarma', true),
       (cfg) => {
@@ -273,7 +281,7 @@ export function App() {
         guardarAjustes(nuevo)
         setAjustes(nuevo)
       },
-      setNtfyOk,
+      estadoEnlace,
     )
   }, [modo, lanzarAviso])
 
