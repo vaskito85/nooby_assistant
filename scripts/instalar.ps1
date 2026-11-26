@@ -177,6 +177,8 @@ try {
       }
       elseif ($serial) {
         Write-Host "    Instalando en $serial (el celu puede pedir confirmación) ..."
+        Write-Host '    La app pesa unos 75 MB y el celu la analiza antes de instalarla: puede tardar varios minutos.'
+        Write-Host '    No cierres esta ventana. Si el celu está lento, cerrá otras apps para que termine antes.'
         $apk = Join-Path $Dir 'nooby.apk'
         & $adb -s $serial install -r $apk
         if ($LASTEXITCODE -ne 0) {
