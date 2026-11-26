@@ -17,3 +17,10 @@ Detalles en `CLAUDE.md`.
 2. En la PC: `npm install` y `npm run pc`. Abrí el panel en http://127.0.0.1:8777/#/panel.
 3. Enchufá el celu por USB: el servidor comparte el puerto y abre Nooby solo.
 4. Avisos desde cualquier programa de la PC: `POST http://127.0.0.1:8777/api/aviso` con `{"texto":"Che, la impresión terminó"}` (Content-Type: application/json).
+
+## Licencia
+Copyright (C) 2026 vaskito85
+
+Este programa es software libre: podés redistribuirlo y/o modificarlo bajo los términos de la
+[GNU Affero General Public License v3](LICENSE) o posterior. Se distribuye sin garantía.
+Software de terceros incluido: ver [NOTICE.md](NOTICE.md).
