@@ -29,16 +29,34 @@ export interface Ciudad {
   lon: number
 }
 
+/**
+ * Pide un JSON primero a nuestro propio dominio (/api/*, función de Vercel) y, si no está o falla,
+ * directo al servicio. Así un celu que no llega a servicios externos (bloqueo, certificados viejos)
+ * igual funciona mientras llegue a esta página.
+ */
+async function pedirJson(local: string, directa: string, senal?: AbortSignal) {
+  const errores: string[] = []
+  for (const url of [local, directa]) {
+    try {
+      const r = await fetch(url, { signal: senal })
+      if (r.ok) return await r.json()
+      errores.push(`${new URL(url, location.href).host} respondió ${r.status}`)
+    } catch (e) {
+      if (senal?.aborted) throw e
+      errores.push(`${new URL(url, location.href).host}: ${e instanceof Error ? e.message : 'error'}`)
+    }
+  }
+  throw new Error(errores.join(' | '))
+}
+
 /** Busca ciudades por nombre (Open-Meteo Geocoding, sin clave). Entiende "bahia blanca" sin tilde. */
 export async function buscarCiudades(texto: string, senal?: AbortSignal): Promise<Ciudad[]> {
   const q = texto.trim()
   if (q.length < 3) return []
-  const url =
+  const directa =
     'https://geocoding-api.open-meteo.com/v1/search' +
     `?name=${encodeURIComponent(q)}&count=6&language=es&format=json`
-  const r = await fetch(url, { signal: senal })
-  if (!r.ok) throw new Error(`buscador ${r.status}`)
-  const d = await r.json()
+  const d = await pedirJson(`/api/ciudad?name=${encodeURIComponent(q)}`, directa, senal)
   return (d.results ?? []).map((x: Record<string, unknown>) => ({
     nombre: String(x.name),
     detalle: [x.admin1, x.country].filter(Boolean).join(', '),
@@ -48,15 +66,13 @@ export async function buscarCiudades(texto: string, senal?: AbortSignal): Promis
 }
 
 export async function pedirClima(lat: number, lon: number): Promise<Clima> {
-  const url =
+  const directa =
     'https://api.open-meteo.com/v1/forecast' +
     `?latitude=${lat}&longitude=${lon}` +
     '&current=temperature_2m,apparent_temperature,weather_code' +
     '&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
     '&timezone=auto&forecast_days=1'
-  const r = await fetch(url, { signal: AbortSignal.timeout?.(12_000) })
-  if (!r.ok) throw new Error(`el servicio de clima respondió ${r.status}`)
-  const d = await r.json()
+  const d = await pedirJson(`/api/clima?lat=${lat}&lon=${lon}`, directa, AbortSignal.timeout?.(15_000))
   return {
     temp: Math.round(d.current.temperature_2m),
     sensacion: Math.round(d.current.apparent_temperature),
