@@ -1,0 +1,11 @@
+{
+  "name": "Nooby",
+  "short_name": "Nooby",
+  "lang": "es-AR",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#070b16",
+  "theme_color": "#070b16",
+  "icons": [{ "src": "/icono.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

@@ -1,0 +1,12 @@
+node_modules
+dist
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+certs/
+*.key
+.claude/settings.local.json
+.vercel
+# wasm de MediaPipe: se copia solo desde node_modules (scripts/copiar-wasm.mjs)
+public/mediapipe/
