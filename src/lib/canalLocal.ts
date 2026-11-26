@@ -28,6 +28,15 @@ export interface AvisoExterno {
   impresora?: string
 }
 
+export interface AgendaItem {
+  id: string
+  tipo: 'temporizador' | 'recordatorio'
+  texto: string
+  /** Cuándo vence (hora de la PC, ms). */
+  cuando: number
+  duracionMs?: number
+}
+
 export interface Escuchas {
   /** Llegó un aviso de afuera (la impresora, un script…). */
   alAviso: (aviso: AvisoExterno) => void
@@ -39,6 +48,8 @@ export interface Escuchas {
   alActividad?: (idleMs: number) => void
   /** El agente de las impresoras mandó un informe nuevo. */
   alImpresoras?: (informe: import('./impresoras').InformeImpresoras) => void
+  /** Venció un temporizador o recordatorio de la agenda (el servidor de la PC lo dispara). */
+  alAgenda?: (item: AgendaItem) => void
   /** El agente mandó una foto de una impresora (el celu la pide aparte con urlFoto). */
   alFoto?: (foto: { impresora: string; nombre: string; ts: number }) => void
 }
@@ -75,6 +86,17 @@ export function conectarLocal(e: Escuchas): () => void {
   al('foto', (d) => {
     if (typeof d.impresora === 'string' && typeof d.ts === 'number') {
       e.alFoto?.({ impresora: d.impresora, nombre: typeof d.nombre === 'string' ? d.nombre : '', ts: d.ts })
+    }
+  })
+  al('agenda', (d) => {
+    if ((d.tipo === 'temporizador' || d.tipo === 'recordatorio') && typeof d.cuando === 'number') {
+      e.alAgenda?.({
+        id: String(d.id ?? ''),
+        tipo: d.tipo,
+        texto: typeof d.texto === 'string' ? d.texto : '',
+        cuando: d.cuando,
+        duracionMs: typeof d.duracionMs === 'number' ? d.duracionMs : undefined,
+      })
     }
   })
   al('impresoras', (d) => {
@@ -167,4 +189,32 @@ export async function cancelarPedidoFoto(impresora: string) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ impresora, cancelar: true }),
   })
+}
+
+/** La agenda pendiente, con la hora de la PC ("ahora") para calcular cuentas regresivas sin depender del reloj del celu. */
+export async function leerAgenda(): Promise<{ ahora: number; items: AgendaItem[] }> {
+  const r = await fetch('/api/agenda', { cache: 'no-store' })
+  if (!r.ok) throw new Error(`agenda ${r.status}`)
+  return r.json()
+}
+
+/** Anota un temporizador ({enMs}) o un recordatorio ({cuando}). */
+export async function crearAgenda(cuerpo: { tipo: 'temporizador' | 'recordatorio'; texto: string; enMs?: number; cuando?: number }) {
+  const r = await fetch('/api/agenda', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(cuerpo),
+  })
+  if (!r.ok) throw new Error(`el servidor respondió ${r.status}`)
+}
+
+/** Cancela uno ({id}), todos los de un tipo ({tipo}) o todo ({todos: true}). Devuelve cuántos canceló. */
+export async function cancelarAgendaServidor(cuerpo: { id?: string; tipo?: 'temporizador' | 'recordatorio'; todos?: boolean }): Promise<number> {
+  const r = await fetch('/api/agenda/cancelar', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(cuerpo),
+  })
+  if (!r.ok) throw new Error(`el servidor respondió ${r.status}`)
+  return (await r.json()).canceladas ?? 0
 }

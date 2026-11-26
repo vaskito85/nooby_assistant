@@ -78,6 +78,11 @@ export type Orden =
   | 'tiempoSentado'
   | 'impresoras'
   | 'verCamara'
+  | 'temporizador'
+  | 'recordatorio'
+  | 'faltaPara'
+  | 'listarAgenda'
+  | 'cancelarAgenda'
   | 'fecha'
   | 'clima'
   | 'hora'
@@ -95,6 +100,14 @@ export type Orden =
   | 'chau'
   | 'saludo'
 
+const CANCELAR =
+  /\b(cancela|cancelar|cancelame|borra|borrar|elimina|eliminar|apaga|apagar|apagame|quita|quitar|deten|detene|detener|anula|anular)\b.*\b(temporizador|temporizadores|timer|recordatorio|recordatorios|alarma|alarmas|aviso|avisos)\b|\bpara (el |la |los |las )?(temporizador|timer|alarma)\b/
+const LISTAR =
+  /\b(que|cuales|cuantos|cuantas) (recordatorios|temporizadores|alarmas|avisos)\b|\bmis (recordatorios|temporizadores|alarmas)\b|\bcuanto (falta|queda) (para|en) (el|la|mi) (temporizador|timer|alarma)\b|\bcuanto queda\b|\btengo (algun|alguna|un|una|ningun|ninguna)? ?(recordatorio|temporizador|alarma)/
+const FALTA_PARA = /\bcuanto falta (para|hasta)\b|\bcuantos dias (faltan|quedan) (para|hasta)\b|\bcuanto queda (para|hasta)\b/
+const PIDE_TEMPORIZADOR = /\b(temporizador|timer|cronometro|cuenta regresiva)\b/
+const PIDE_RECORDATORIO = /\b(recordame|recuerdame|acordame|agendame|anotame|recordatorio|recordarme)\b/
+
 const VERBOS_VER = /\b(mostra|mostrame|muestra|muestrame|ensena|ensename|dejame ver|quiero ver|veo|ver|foto|fotos|video|camara)\b|\bque se ve\b/
 const PALABRAS_IMPRESORA = /\b(impresora|impresoras|pieza|impresion|h2c|a1|neptun\w*|bambu)\b|\ba uno\b|\bhache\b/
 const PIDE_ESTADO = /\bestado\b|\bcomo (van|va|esta|estan)\b|\bcuanto falta\b|\bimprimiendo\b/
@@ -111,6 +124,14 @@ export function interpretar(texto: string): Orden | null {
   const t = normalizar(texto)
   if (!t) return null
   if (/(cuanto|hace cuanto|cuantos minutos).*(sentad|llevo)|\bsentad/.test(t)) return 'tiempoSentado'
+  // La consulta va primero: "cuánto falta para el temporizador" y "pará el temporizador" se escriben igual sin tildes.
+  if (LISTAR.test(t)) return 'listarAgenda'
+  if (CANCELAR.test(t)) return 'cancelarAgenda'
+  if (FALTA_PARA.test(t) && !/\bimpresora|\bimpresion|\bimprimiendo/.test(t) && !PIDE_TEMPORIZADOR.test(t)) return 'faltaPara'
+  if (PIDE_TEMPORIZADOR.test(t)) return 'temporizador'
+  // "avisame en 15 minutos" es un temporizador; "avisame mañana que tengo turno" es un recordatorio
+  if (/\bavisame\b/.test(t) && /\b(minutos?|horas?|segundos?)\b/.test(t) && !/\bque\b/.test(t)) return 'temporizador'
+  if (PIDE_RECORDATORIO.test(t) || /\bavisame\b/.test(t)) return 'recordatorio'
   if (pideVerCamara(t)) return 'verCamara'
   if (/\bimpresora|\bimpresion|\bimprimiendo|\bcuanto falta\b/.test(t)) return 'impresoras'
   if (/\bque dia\b|\bque fecha\b|\ba cuanto estamos\b|\bfecha de hoy\b|\bdia de hoy\b/.test(t)) return 'fecha'
@@ -141,6 +162,19 @@ export interface GrupoFrases {
 
 /** Todo lo que se le puede decir a Nooby (después de despertarlo con "che nooby"). */
 export const CATALOGO: GrupoFrases[] = [
+  {
+    orden: 'temporizador',
+    titulo: 'Poner un temporizador (suena una alarma al terminar)',
+    ejemplos: ['poné un temporizador de 10 minutos', 'temporizador de media hora', 'avisame en 15 minutos', 'cuenta regresiva de 5 minutos', 'poneme un timer de cinco minutos para los huevos'],
+  },
+  {
+    orden: 'recordatorio',
+    titulo: 'Crear un recordatorio',
+    ejemplos: ['recordame llamar a Juan mañana a las nueve', 'creame un recordatorio de comprar pan', 'acordame en 20 minutos de apagar el horno', 'avisame mañana que tengo turno'],
+  },
+  { orden: 'faltaPara', titulo: 'Cuánto falta para una fecha', ejemplos: ['cuánto falta para Navidad', 'cuántos días faltan para el 15 de marzo', 'cuánto falta para fin de año'] },
+  { orden: 'listarAgenda', titulo: 'Qué recordatorios o temporizadores tengo', ejemplos: ['qué recordatorios tengo', 'qué temporizadores hay', 'cuánto falta para el temporizador'] },
+  { orden: 'cancelarAgenda', titulo: 'Cancelar un temporizador o recordatorio', ejemplos: ['cancelá el temporizador', 'borrá los recordatorios', 'apagá la alarma'] },
   { orden: 'hora', titulo: 'La hora', ejemplos: ['qué hora es', 'decime la hora', 'qué horas son'] },
   { orden: 'fecha', titulo: 'La fecha', ejemplos: ['qué día es hoy', 'qué fecha es', 'a cuánto estamos'] },
   {
@@ -176,5 +210,5 @@ export const CATALOGO: GrupoFrases[] = [
 
 /** ¿Te están diciendo "OK" / "listo" para cerrar un aviso? (se usa mientras suena la alarma de la impresora) */
 export function esConfirmacion(texto: string): boolean {
-  return /\b(ok|okey|okay|oka|oke|listo|entendido|gracias|basta|callate|silencio|dale|ya esta)\b/.test(normalizar(texto))
+  return /\b(ok|okey|okay|oka|oke|listo|entendido|gracias|basta|callate|silencio|dale|ya esta|apaga|apagala|apagalo|detene|detenela|detenelo)\b/.test(normalizar(texto))
 }

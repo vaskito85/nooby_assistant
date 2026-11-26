@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'rea
 import { Cara, type Humor } from './Cara'
 import { ClimaAnimado } from './ClimaAnimado'
 import { VisorFoto } from './VisorFoto'
+import { PanelAviso } from './PanelAviso'
+import { RelojAnimado } from './RelojAnimado'
+import { cuantoFalta } from './lib/fechas'
+import { describirMomento, entenderRecordatorio, entenderTemporizador, extraerMomento, minutosHablados, tokenizar } from './lib/tiempo'
 import { ImpresoraAnimada } from './ImpresoraAnimada'
 import { PanelClima } from './PanelClima'
 import { PanelImpresora } from './PanelImpresora'
@@ -12,12 +16,12 @@ import * as dichos from './lib/respuestas'
 import { describirImpresoras, elegirImpresora, INFORME_VIGENTE_MS, inferirEstado, ordenarPorRelevancia, type EstadoImpresora, type Impresora, type InformeImpresoras } from './lib/impresoras'
 import { comentarioPorMovimiento, FRASE_HOLA_DE_NUEVO, FRASE_YA_TE_VAS } from './lib/comentarios'
 import { Mirada } from './lib/mirada'
-import { detectarLlamado, esConfirmacion, interpretar, type Orden } from './lib/voz'
+import { detectarLlamado, esConfirmacion, interpretar, normalizar, type Orden } from './lib/voz'
 import { callar, desbloquear, hablar, sonar, type Sonido } from './lib/audio'
 import { frase, pedirClima, type Clima } from './lib/clima'
 import { escenaClima } from './lib/escenas'
 import { aplicarRemota, cargarAjustes, guardarAjustes, limpiarLlamadas, temaConfig, type Ajustes } from './lib/config'
-import { conectarLocal, estadoLocal, cancelarPedidoFoto, guardarConfigLocal, leerImpresoras, pedirFoto, urlFoto } from './lib/canalLocal'
+import { conectarLocal, estadoLocal, cancelarAgendaServidor, cancelarPedidoFoto, crearAgenda, guardarConfigLocal, leerAgenda, leerImpresoras, pedirFoto, urlFoto, type AgendaItem } from './lib/canalLocal'
 import { conectarNtfy } from './lib/ntfy'
 import { Presencia } from './lib/presencia'
 import { Sentado } from './lib/sentado'
@@ -30,6 +34,7 @@ declare global {
 }
 
 const MIN = 60_000
+const ESPERA_FIN_MS = 1000 // tras una pausa, espera esto antes de dar por terminada tu frase
 const CIERRE_MENSAJE_MS = 5000 // los mensajes se van solos 5 segundos después de decirse
 const AVISO_IMPRESORA_MS = 5 * MIN // el aviso de la impresora queda en pantalla hasta el OK o hasta este tiempo
 const INTENTOS_ENTRENAMIENTO = 5 // cuántas veces repite la frase al entrenar
@@ -57,12 +62,19 @@ type Vista =
   | { tipo: 'clima'; clima: Clima; ciudad: string }
   | { tipo: 'foto'; nombre: string; clave: string; desde: number; impresora: Impresora; informe: InformeImpresoras }
 
+/** Una pregunta que Nooby te hizo y espera que le contestes ("¿de cuánto tiempo?", "¿cuándo querés que te lo recuerde?"). */
+type Dialogo =
+  | { tipo: 'temporizador'; intentos: number }
+  | { tipo: 'recordatorio'; texto?: string; cuando?: number; intentos: number }
+
 interface Aviso {
   texto: string
   sonido: Sonido
   /** Solo avisos de la impresora: qué dibujo mostrar. */
   estado?: EstadoImpresora
   impresora?: string
+  /** De dónde viene la alarma: la impresora (por defecto), un temporizador o un recordatorio. */
+  tipo?: 'impresora' | 'temporizador' | 'recordatorio'
   /** Cuándo llegó (reloj del celu): sirve para emparejarlo con su foto. */
   en?: number
 }
@@ -87,6 +99,9 @@ export function App() {
   const [informe, setInforme] = useState<InformeImpresoras>({ ts: null, impresoras: [] })
   const [fotos, setFotos] = useState<FotoRecibida[]>([])
   const [vista, setVista] = useState<Vista | null>(null)
+  // Agenda de la PC (temporizadores y recordatorios) y la diferencia entre el reloj de la PC y el del celu.
+  const [agenda, setAgenda] = useState<{ items: AgendaItem[]; desfase: number }>({ items: [], desfase: 0 })
+  const [, setTic] = useState(0) // hace latir la cuenta regresiva cada segundo (solo cuando hay un temporizador)
   // Lo que se va oyendo, en tiempo real, para ver si te entiende (ok: ✓ entendió algo, ✗ no).
   const [oyendo, setOyendo] = useState<{ texto: string; final: boolean; ok?: boolean } | null>(null)
   const timerOyendo = useRef<number | null>(null)
@@ -129,6 +144,10 @@ export function App() {
   const vistaRef = useRef(vista)
   vistaRef.current = vista
   const timerVista = useRef<number | null>(null)
+  const dialogoRef = useRef<Dialogo | null>(null)
+  const bufferHabla = useRef('')
+  const timerFin = useRef<number | null>(null)
+  const procesarAtentoRef = useRef<(t: string) => void>(() => {})
   const actividadPcRef = useRef<ActividadPc | null>(null)
   const iniciarEntrenamientoRef = useRef<(frase: string) => void>(() => {})
   const mirada = useRef<Mirada | null>(null)
@@ -155,10 +174,10 @@ export function App() {
       texto: string,
       sonido: Sonido,
       insistir: boolean,
-      opciones: { cerrarEn?: number; forzarVoz?: boolean; estado?: EstadoImpresora; impresora?: string } = {},
+      opciones: { cerrarEn?: number; forzarVoz?: boolean; estado?: EstadoImpresora; impresora?: string; tipo?: Aviso['tipo'] } = {},
     ) => {
       cortarAlarma()
-      setAviso({ texto, sonido, estado: opciones.estado, impresora: opciones.impresora, en: Date.now() })
+      setAviso({ texto, sonido, estado: opciones.estado, impresora: opciones.impresora, tipo: opciones.tipo, en: Date.now() })
       const habla = opciones.forzarVoz || ajustesRef.current.voz
       // Solo la alarma de la impresión suena como alarma. Todo lo demás se dice en voz alta, sin "ding" antes;
       // si la voz está apagada, suena la campanita para que el aviso no pase en silencio.
@@ -402,6 +421,17 @@ export function App() {
         actividadPcRef.current = { idleMs, en: Date.now() }
       },
       alImpresoras: setInforme,
+      alAgenda: (it) => {
+        // Venció un temporizador o un recordatorio: suena la alarma y la cara lo muestra hasta el OK (o 5 minutos).
+        const texto =
+          it.tipo === 'temporizador'
+            ? `Terminó el temporizador${it.texto ? ` de ${it.texto}` : it.duracionMs ? ` de ${minutosHablados(it.duracionMs)}` : ''}.`
+            : it.texto
+              ? `Recordatorio: ${it.texto}.`
+              : 'Te aviso: ya es la hora.'
+        lanzarAviso(texto, 'alarma', true, { tipo: it.tipo })
+        void refrescarAgenda()
+      },
       alFoto: (f) =>
         setFotos((previas) =>
           [
@@ -483,6 +513,7 @@ export function App() {
     if (timerAtento.current) window.clearTimeout(timerAtento.current)
     timerAtento.current = window.setTimeout(() => {
       setOido((o) => (o === 'atento' ? 'listo' : o))
+      dialogoRef.current = null
     }, ms)
   }
 
@@ -492,6 +523,172 @@ export function App() {
     ultimaRespuesta.current = texto
     lanzarAviso(texto, 'suave', false, { cerrarEn: 12_000, forzarVoz: true })
   }
+
+  // ---------- agenda: temporizadores, recordatorios y cuánto falta ----------
+  const refrescarAgenda = async () => {
+    try {
+      const a = await leerAgenda()
+      setAgenda({ items: a.items, desfase: a.ahora - Date.now() })
+    } catch {
+      /* sin servidor: queda lo que había */
+    }
+  }
+  /** La hora de la PC: "mañana a las 9" se calcula con ella, no con el reloj del celu. */
+  const ahoraServidor = async () => {
+    try {
+      return new Date((await leerAgenda()).ahora)
+    } catch {
+      return new Date()
+    }
+  }
+  const preguntar = (pregunta: string, d: Dialogo) => {
+    dialogoRef.current = d
+    responder(pregunta)
+    mantenerAtento(15_000) // da tiempo a contestar
+  }
+
+  const hacerTemporizador = async (texto: string) => {
+    const t = entenderTemporizador(texto)
+    if (!t) {
+      preguntar('¿De cuánto tiempo?', { tipo: 'temporizador', intentos: 0 })
+      return
+    }
+    dialogoRef.current = null
+    try {
+      await crearAgenda({ tipo: 'temporizador', texto: t.etiqueta, enMs: t.ms })
+      void refrescarAgenda()
+      responder(`Listo, temporizador de ${minutosHablados(t.ms)}${t.etiqueta ? ` para ${t.etiqueta}` : ''}.`)
+    } catch {
+      responder('No pude crear el temporizador.')
+    }
+  }
+
+  const hacerRecordatorio = async (texto: string, previo?: { texto?: string; cuando?: number }) => {
+    const ahoraSrv = await ahoraServidor()
+    const e = entenderRecordatorio(texto, ahoraSrv)
+    const mensaje = previo?.texto || e.texto
+    const cuando = previo?.cuando ?? e.momento?.cuando.getTime()
+    if (previo?.cuando == null && e.momento?.pasado) {
+      preguntar('Esa hora ya pasó. ¿Para cuándo lo querés?', { tipo: 'recordatorio', texto: mensaje || undefined, intentos: 0 })
+      return
+    }
+    if (!mensaje && cuando == null) {
+      preguntar('¿Qué querés que te recuerde?', { tipo: 'recordatorio', intentos: 0 })
+      return
+    }
+    if (cuando == null) {
+      preguntar('¿Cuándo querés que te lo recuerde?', { tipo: 'recordatorio', texto: mensaje, intentos: 0 })
+      return
+    }
+    if (!mensaje) {
+      preguntar('¿Qué querés que te recuerde?', { tipo: 'recordatorio', cuando, intentos: 0 })
+      return
+    }
+    dialogoRef.current = null
+    try {
+      await crearAgenda({ tipo: 'recordatorio', texto: mensaje, cuando })
+      void refrescarAgenda()
+      responder(`Listo, te lo recuerdo ${describirMomento(new Date(cuando), ahoraSrv)}: ${mensaje}.`)
+    } catch {
+      responder('No pude guardar el recordatorio.')
+    }
+  }
+
+  /** Si hay una pregunta pendiente, lo que decís es la respuesta. Devuelve true si se usó para eso. */
+  const continuarDialogo = (texto: string): boolean => {
+    const d = dialogoRef.current
+    if (!d) return false
+    if (/\b(cancela|cancelar|olvidalo|olvidate|dejalo|no importa)\b/.test(normalizar(texto))) {
+      dialogoRef.current = null
+      responder('Bueno, lo dejamos.')
+      return true
+    }
+    // Un pedido claro y nuevo ("poneme un temporizador", "qué recordatorios tengo") corta la pregunta pendiente y se atiende.
+    const nuevo = interpretar(texto)
+    if (nuevo && ['temporizador', 'recordatorio', 'listarAgenda', 'cancelarAgenda', 'faltaPara', 'chau', 'despedida'].includes(nuevo)) {
+      dialogoRef.current = null
+      return false
+    }
+    // Esperaba el mensaje: todo lo que diga es el mensaje (y si trae la hora, también se toma).
+    if (d.tipo === 'recordatorio' && !d.texto) {
+      const limpio = entenderRecordatorio(texto, new Date()).texto || texto.trim()
+      void hacerRecordatorio(texto, { cuando: d.cuando, texto: limpio })
+      return true
+    }
+    // Esperaba la duración o el momento: si lo que dijo no lo tiene, o es otro pedido, o se repite la pregunta una vez.
+    const entendio = d.tipo === 'temporizador' ? entenderTemporizador(texto) !== null : extraerMomento(tokenizar(texto), new Date()) !== null
+    if (entendio) {
+      if (d.tipo === 'temporizador') void hacerTemporizador(texto)
+      else void hacerRecordatorio(texto, { texto: d.texto })
+      return true
+    }
+    if (interpretar(texto)) {
+      dialogoRef.current = null // era otro pedido: se atiende normal
+      return false
+    }
+    if (d.intentos >= 1) {
+      dialogoRef.current = null
+      responder('¿Cómo? Lo dejamos así.')
+      return true
+    }
+    d.intentos++
+    preguntar(d.tipo === 'temporizador' ? '¿Cómo? ¿De cuánto tiempo?' : '¿Cómo? ¿Para cuándo?', d)
+    return true
+  }
+
+  const contarCuantoFalta = async (texto: string) => {
+    const ahoraSrv = await ahoraServidor()
+    responder(cuantoFalta(texto, ahoraSrv) ?? '¿Para qué fecha? Decime, por ejemplo, cuánto falta para Navidad.')
+  }
+
+  const listarAgenda = async () => {
+    try {
+      const a = await leerAgenda()
+      setAgenda({ items: a.items, desfase: a.ahora - Date.now() })
+      if (a.items.length === 0) {
+        responder('No tenés recordatorios ni temporizadores pendientes.')
+        return
+      }
+      const frases = a.items.slice(0, 4).map((i) =>
+        i.tipo === 'temporizador'
+          ? `Temporizador${i.texto ? ` de ${i.texto}` : ''}: faltan ${minutosHablados(i.cuando - a.ahora)}`
+          : `Recordatorio: ${i.texto || 'sin texto'}, ${describirMomento(new Date(i.cuando), new Date(a.ahora))}`,
+      )
+      responder(`Tenés ${a.items.length === 1 ? '1 cosa anotada' : `${a.items.length} cosas anotadas`}. ${frases.join('. ')}.`)
+    } catch {
+      responder('No pude mirar la agenda.')
+    }
+  }
+
+  const cancelarAgenda = async (texto: string) => {
+    const t = normalizar(texto)
+    const tipo = /\b(temporizador|temporizadores|timer)\b/.test(t) ? 'temporizador' : /\b(recordatorio|recordatorios|aviso|avisos)\b/.test(t) ? 'recordatorio' : undefined
+    try {
+      const n = await cancelarAgendaServidor(tipo ? { tipo } : { todos: true })
+      void refrescarAgenda()
+      if (n === 0) responder('No tenías nada pendiente de eso.')
+      else if (tipo === 'temporizador') responder(n === 1 ? 'Listo, cancelé el temporizador.' : `Listo, cancelé ${n} temporizadores.`)
+      else if (tipo === 'recordatorio') responder(n === 1 ? 'Listo, cancelé el recordatorio.' : `Listo, cancelé ${n} recordatorios.`)
+      else responder(n === 1 ? 'Listo, cancelé 1 cosa.' : `Listo, cancelé ${n} cosas.`)
+    } catch {
+      responder('No pude cancelar.')
+    }
+  }
+
+  // La cuenta regresiva y el refresco de la agenda mientras hay servidor.
+  useEffect(() => {
+    if (modo !== 'local') return
+    void refrescarAgenda()
+    const id = window.setInterval(() => void refrescarAgenda(), 60_000)
+    return () => window.clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modo])
+  const hayTemporizador = agenda.items.some((i) => i.tipo === 'temporizador')
+  useEffect(() => {
+    if (!hayTemporizador) return
+    const id = window.setInterval(() => setTic((t) => t + 1), 1000)
+    return () => window.clearInterval(id)
+  }, [hayTemporizador])
 
   // Vistas: el dibujo (impresora, sol, nubes…) toma el lugar de la cara y la info queda al costado.
   /** Si la vista que se va era una foto pedida, se avisa que ya no hace falta (si el agente todavía no la mandó). */
@@ -577,6 +774,21 @@ export function App() {
         agua.current.descansar()
         responder(`Muy bien, ${nombre}. Hay que tomar agua.`)
         break
+      case 'temporizador':
+        void hacerTemporizador(texto)
+        break
+      case 'recordatorio':
+        void hacerRecordatorio(texto)
+        break
+      case 'faltaPara':
+        void contarCuantoFalta(texto)
+        break
+      case 'listarAgenda':
+        void listarAgenda()
+        break
+      case 'cancelarAgenda':
+        void cancelarAgenda(texto)
+        break
       case 'verCamara':
         void pedirVerImpresora(texto)
         break
@@ -652,6 +864,10 @@ export function App() {
   }
 
   const atender = (texto: string) => {
+    if (dialogoRef.current && continuarDialogo(texto)) {
+      mantenerAtento(15_000)
+      return
+    }
     const orden = interpretar(texto)
     if (!orden) {
       responder('¿Cómo? No te entendí.')
@@ -742,6 +958,31 @@ export function App() {
     timerOyendo.current = window.setTimeout(() => setOyendo(null), final ? CIERRE_MENSAJE_MS : 3000)
   }
 
+  // Esperar a que termines: una pausa en medio de la frase no la corta. Lo que va diciendo se junta y recién se atiende cuando pasa
+  // un rato sin que hables (ESPERA_FIN_MS).
+  const procesarAtento = (texto: string) => {
+    if (oidoRef.current !== 'atento') return
+    if (vistaRef.current && esConfirmacion(texto)) {
+      cerrarVista() // con una vista en pantalla, "OK" la cierra
+      return
+    }
+    const llamado = detectarLlamado(texto, {
+      gramatica: typeof window.NoobyNativo?.modoOido === 'function',
+      variantes: ajustesRef.current.llamadas,
+    })
+    if (llamado.llamado && !interpretar(llamado.resto)) despertar()
+    else atender(llamado.llamado ? llamado.resto : texto)
+  }
+  procesarAtentoRef.current = procesarAtento
+  const rearmarFin = () => {
+    if (timerFin.current) window.clearTimeout(timerFin.current)
+    timerFin.current = window.setTimeout(() => {
+      const t = bufferHabla.current
+      bufferHabla.current = ''
+      if (t) procesarAtentoRef.current(t)
+    }, ESPERA_FIN_MS)
+  }
+
   // Lo que oye el celu llega como texto (el APK solo hace de micrófono): acá se decide qué hacer.
   alOirRef.current = (d) => {
     const final = typeof d?.text === 'string'
@@ -763,10 +1004,12 @@ export function App() {
     if (oidoRef.current === 'atento') {
       mantenerAtento() // mientras habla, no se duerme
     }
+    // Atento: si ya dijiste algo y seguís hablando, se reinicia la espera.
+    if (oidoRef.current === 'atento' && bufferHabla.current && !final) rearmarFin()
     if (!final) return
-    // Con una vista en pantalla (impresoras o clima), "OK" la cierra.
-    if (oidoRef.current === 'atento' && vistaRef.current && esConfirmacion(texto)) {
-      cerrarVista()
+    if (oidoRef.current === 'atento') {
+      bufferHabla.current = (bufferHabla.current + ' ' + texto).trim()
+      rearmarFin()
       return
     }
     const llamado = detectarLlamado(texto, {
@@ -781,9 +1024,6 @@ export function App() {
       } else {
         despertar()
       }
-    } else if (oidoRef.current === 'atento') {
-      if (llamado.llamado && !interpretar(llamado.resto)) despertar()
-      else atender(llamado.llamado ? llamado.resto : texto)
     }
   }
 
@@ -866,6 +1106,17 @@ export function App() {
                 : 'normal'
 
   const enlaceOk = ntfyOk === true
+  // Cuenta regresiva del próximo temporizador (con la hora de la PC).
+  const cuentaRegresiva = (() => {
+    const tm = agenda.items.filter((i) => i.tipo === 'temporizador')
+    if (tm.length === 0) return ''
+    const falta = Math.max(0, Math.min(...tm.map((i) => i.cuando)) - (Date.now() + agenda.desfase))
+    const seg = Math.ceil(falta / 1000)
+    const h = Math.floor(seg / 3600)
+    const m = Math.floor((seg % 3600) / 60)
+    const ss = String(seg % 60).padStart(2, '0')
+    return ` · ⏱ ${h > 0 ? `${h}:${String(m).padStart(2, '0')}` : m}:${ss}${tm.length > 1 ? ` (+${tm.length - 1})` : ''}`
+  })()
   // La foto pedida: la que llegó de esa impresora después de pedirla.
   const fotoVista = vista?.tipo === 'foto' ? (fotos.find((f) => (f.clave === vista.clave || f.clave === 'general') && f.recibidaEn >= vista.desde - 1000) ?? null) : null
   // Cómo se dibuja la impresora de la vista: según la impresora que más importa (error > pausa > imprimiendo…).
@@ -900,7 +1151,11 @@ export function App() {
           <section className="lado-cara">
             {aviso?.sonido === 'alarma' ? (
               // Aviso de la impresora: en el lugar de la cara, una impresora (mismo tamaño: nada se corre).
-              <ImpresoraAnimada estado={estadoAviso} />
+              aviso.tipo === 'temporizador' || aviso.tipo === 'recordatorio' ? (
+                <RelojAnimado tipo={aviso.tipo} />
+              ) : (
+                <ImpresoraAnimada estado={estadoAviso} />
+              )
             ) : vista?.tipo === 'impresoras' ? (
               <ImpresoraAnimada estado={estadoVista} />
             ) : vista?.tipo === 'foto' ? (
@@ -925,6 +1180,7 @@ export function App() {
                   : ausenteLargo
                     ? 'Descansando…'
                     : 'Mirando…'}
+              {cuentaRegresiva}
             </p>
 
             <p className={`zona-oyendo${oyendo?.final ? ' final' : ''}`} aria-live="polite">
@@ -938,7 +1194,9 @@ export function App() {
             </p>
 
             <div className="zona-mensaje">
-              {aviso?.sonido === 'alarma' ? (
+              {aviso?.sonido === 'alarma' && (aviso.tipo === 'temporizador' || aviso.tipo === 'recordatorio') ? (
+                <PanelAviso tipo={aviso.tipo} texto={aviso.texto} alOk={entendido} />
+              ) : aviso?.sonido === 'alarma' ? (
                 <PanelImpresora
                   texto={aviso.texto}
                   estado={estadoAviso}
@@ -999,23 +1257,6 @@ export function App() {
                 nota && <p className="nota">{nota}</p>
               )}
             </div>
-
-            <nav className="botones">
-              <button className="boton" onClick={() => verClima()}>
-                ☁ Clima
-              </button>
-              <button
-                className="boton"
-                onClick={() => {
-                  sentado.current.descansar()
-                  agua.current.descansar()
-                  setSentadoMin(0)
-                  setNota('Contador en cero.')
-                }}
-              >
-                ↺ Ya me levanté
-              </button>
-            </nav>
           </section>
         </>
       )}

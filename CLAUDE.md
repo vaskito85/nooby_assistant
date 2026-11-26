@@ -60,6 +60,8 @@ Web app de una pantalla (Vite + React + TS) que se muestra en un celu viejo (Gal
 - **Foto a pedido**: "mostrame la H2C" → `pedirVerImpresora` elige la impresora por el nombre hablado (`elegirImpresora`: traduce "hache dos ce"/"a uno"/"neptuno cuatro"),
   `POST /api/pedido` deja el pedido en el servidor (45 s, solo localhost) y el agente lo atiende con `GET /api/pedidos?espera=20` (consulta larga, con token) → `POST /api/foto`.
   La vista `foto` muestra `VisorFoto` (grande, en el lugar de la cara) + una tarjeta; "pidiéndole la foto…" y, a los 20 s sin foto, explica. Cerrar la vista cancela el pedido. Solo fotos (sin video).
+- **Paciencia** (`ESPERA_FIN_MS` en App.tsx): los finales de Vosk se juntan y se procesan tras 1 s de silencio; un parcial nuevo reinicia la espera. No se lo puede interrumpir mientras habla.
+- **Agenda** (v0.5): temporizadores y recordatorios viven en el servidor (`~/.nooby/agenda.json`, `/api/agenda`, `/api/agenda/cancelar`, evento SSE `agenda`; si no hay cara conectada queda pendiente 24 h). Parseo en `lib/numeros.ts`, `lib/tiempo.ts`, `lib/fechas.ts` (cuánto falta para Navidad, etc.). Diálogo de seguimiento (`dialogoRef`): si falta el texto o la hora, pregunta; un pedido nuevo claro cancela la pregunta. Alarma: `RelojAnimado` + `PanelAviso`. No hay botones en pantalla: clima y "ya me levanté" son solo por voz.
 - **Mensajes**: los comunes se van solos 5 s después de decirse (voz + 5 s); la alarma de la impresora queda hasta el OK o 5 min. Lo que se oye se muestra en vivo (`zona-oyendo`, ✓/✗);
   si no entiende dice "¿Cómo? No te entendí."
 - **Aviso de la impresora** (alarma): la cara se reemplaza por `ImpresoraAnimada` (mismo cuadro que la cara: nada se corre; SVG con SMIL: imprimiendo / terminada ✓ /

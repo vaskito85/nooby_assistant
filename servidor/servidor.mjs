@@ -226,6 +226,71 @@ function despertarEsperando() {
   }
 }
 
+// ---------- agenda: temporizadores y recordatorios ----------
+// Viven acá (en la PC, que está siempre prendida) y no en el celu: así sobreviven si se recarga la página o se reinicia el celu.
+// Al llegar la hora se manda el evento "agenda" por SSE y la cara hace sonar la alarma. Si en ese momento no hay ninguna cara
+// conectada, queda pendiente y se entrega apenas se conecte una (hasta 24 h después).
+const ARCHIVO_AGENDA = join(CARPETA, 'agenda.json')
+const AGENDA_MAX = 50
+const TIPOS_AGENDA = ['temporizador', 'recordatorio']
+
+function cargarAgenda() {
+  try {
+    const j = JSON.parse(readFileSync(ARCHIVO_AGENDA, 'utf8'))
+    return Array.isArray(j) ? j.filter((i) => i && TIPOS_AGENDA.includes(i.tipo) && Number.isFinite(i.cuando)) : []
+  } catch {
+    return []
+  }
+}
+let agenda = cargarAgenda()
+function guardarAgenda() {
+  mkdirSync(CARPETA, { recursive: true })
+  writeFileSync(ARCHIVO_AGENDA, JSON.stringify(agenda))
+}
+const pendientesAgenda = () => agenda.filter((i) => i.estado === 'pendiente')
+const publicoAgenda = (i) => ({ id: i.id, tipo: i.tipo, texto: i.texto, cuando: i.cuando, duracionMs: i.duracionMs })
+
+/** Valida lo que manda la cara: tipo, texto corto y un momento futuro (hasta 400 días). null si no sirve. */
+function itemAgenda(c, ahora) {
+  if (typeof c !== 'object' || c === null || !TIPOS_AGENDA.includes(c.tipo)) return null
+  let cuando
+  if (typeof c.enMs === 'number' && Number.isFinite(c.enMs)) cuando = ahora + c.enMs
+  else if (typeof c.cuando === 'number' && Number.isFinite(c.cuando)) cuando = c.cuando
+  else return null
+  if (cuando < ahora + 500 || cuando > ahora + 400 * 86_400_000) return null
+  return {
+    id: randomBytes(6).toString('hex'),
+    tipo: c.tipo,
+    texto: String(c.texto ?? '').trim().slice(0, 120),
+    cuando,
+    duracionMs: c.tipo === 'temporizador' && typeof c.enMs === 'number' ? Math.min(Math.round(c.enMs), 7 * 86_400_000) : undefined,
+    creado: ahora,
+    estado: 'pendiente',
+  }
+}
+
+/** Una vez por segundo: lo que venció se avisa (o queda pendiente si no hay cara conectada). */
+function revisarAgenda() {
+  const ahora = Date.now()
+  let cambio = false
+  for (const it of agenda) {
+    if (it.estado !== 'pendiente' || it.cuando > ahora) continue
+    if (clientes.size > 0) {
+      emitir('agenda', publicoAgenda(it))
+      it.estado = 'avisado'
+      it.avisado = ahora
+      cambio = true
+    } else if (ahora - it.cuando > 24 * 3_600_000) {
+      it.estado = 'perdido'
+      it.avisado = ahora
+      cambio = true
+    }
+  }
+  const antes = agenda.length
+  agenda = agenda.filter((it) => it.estado === 'pendiente' || ahora - (it.avisado ?? it.cuando) < 3_600_000)
+  if (cambio || agenda.length !== antes) guardarAgenda()
+}
+
 /** Lee el cuerpo como bytes (para la foto). Corta si supera el máximo. */
 function leerBinario(req, max) {
   return new Promise((resolve, reject) => {
@@ -392,6 +457,7 @@ async function manejar(req, res) {
       impresorasTs: impresoras.ts,
       fotos: fotos.size,
       pedidos: pedidosVigentes().length,
+      agenda: pendientesAgenda().length,
     })
   }
 
@@ -420,6 +486,16 @@ async function manejar(req, res) {
     })
     res.write(`retry: 3000\nevent: config\ndata: ${JSON.stringify(estado.config)}\n\n`)
     if (actividadPc) res.write(`event: actividad\ndata: ${JSON.stringify({ idleMs: actividadPc.idleMs })}\n\n`)
+    {
+      const ahora = Date.now()
+      const vencidos = pendientesAgenda().filter((i) => i.cuando <= ahora)
+      for (const it of vencidos) {
+        res.write(`event: agenda\ndata: ${JSON.stringify(publicoAgenda(it))}\n\n`)
+        it.estado = 'avisado'
+        it.avisado = ahora
+      }
+      if (vencidos.length > 0) guardarAgenda()
+    }
     clientes.add(res)
     const latido = setInterval(() => res.write(': ♥\n\n'), 20_000)
     req.on('close', () => {
@@ -492,6 +568,40 @@ async function manejar(req, res) {
       } catch {
         return json(res, 400, { error: 'JSON inválido' })
       }
+    }
+  }
+
+  if (ruta === '/api/agenda' && req.method === 'GET') {
+    // "ahora" es la hora de la PC: la cara la usa para calcular "mañana a las 9" y las cuentas regresivas sin depender de su reloj.
+    return json(res, 200, { ahora: Date.now(), items: pendientesAgenda().sort((a, b) => a.cuando - b.cuando).map(publicoAgenda) })
+  }
+
+  if (ruta === '/api/agenda' && req.method === 'POST') {
+    if (!String(req.headers['content-type']).includes('application/json')) return json(res, 415, { error: 'usá application/json' })
+    try {
+      if (pendientesAgenda().length >= AGENDA_MAX) return json(res, 429, { error: 'demasiados pendientes' })
+      const it = itemAgenda(JSON.parse(await leerCuerpo(req)), Date.now())
+      if (!it) return json(res, 400, { error: 'tipo, texto y momento futuro (enMs o cuando)' })
+      agenda.push(it)
+      guardarAgenda()
+      return json(res, 200, { ok: true, id: it.id, cuando: it.cuando })
+    } catch {
+      return json(res, 400, { error: 'JSON inválido' })
+    }
+  }
+
+  if (ruta === '/api/agenda/cancelar' && req.method === 'POST') {
+    // { "id": "..." } uno; { "tipo": "temporizador" } todos de ese tipo; { "todos": true } todo lo pendiente.
+    if (!String(req.headers['content-type']).includes('application/json')) return json(res, 415, { error: 'usá application/json' })
+    try {
+      const c = JSON.parse(await leerCuerpo(req))
+      const sacar = (i) => i.estado === 'pendiente' && (c.todos === true || (c.id && i.id === c.id) || (c.tipo && i.tipo === c.tipo))
+      const antes = agenda.length
+      agenda = agenda.filter((i) => !sacar(i))
+      guardarAgenda()
+      return json(res, 200, { ok: true, canceladas: antes - agenda.length })
+    } catch {
+      return json(res, 400, { error: 'JSON inválido' })
     }
   }
 
@@ -618,6 +728,7 @@ function escuchar() {
     setInterval(() => void cicloAdb(), 4000)
     void puenteNtfy()
     vigilarActividadPc()
+    setInterval(revisarAgenda, 1000)
   })
 }
 

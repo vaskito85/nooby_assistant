@@ -97,3 +97,27 @@ describe('respuestas', () => {
     expect(CHISTES).toContain(chiste(() => 1)) // azar() nunca da 1, pero no debe romper
   })
 })
+
+describe('agenda: no se pisa con lo demás', () => {
+  it('"cuánto falta" solo o con la impresión sigue siendo de las impresoras', () => {
+    expect(interpretar('cuánto falta')).toBe('impresoras')
+    expect(interpretar('cuánto falta para que termine la impresión')).toBe('impresoras')
+  })
+  it('"cuánto falta para ..." una fecha es de la agenda', () => {
+    expect(interpretar('cuánto falta para navidad')).toBe('faltaPara')
+    expect(interpretar('cuánto falta para el viernes')).toBe('faltaPara')
+  })
+  it('un temporizador con "para los huevos" no se confunde con cancelar', () => {
+    expect(interpretar('poneme un temporizador de cinco minutos para los huevos')).toBe('temporizador')
+    expect(interpretar('pará el temporizador')).toBe('cancelarAgenda')
+  })
+  it('avisame: tiempo corto = temporizador, mensaje = recordatorio', () => {
+    expect(interpretar('avisame en veinte minutos')).toBe('temporizador')
+    expect(interpretar('avisame en veinte minutos que salga')).toBe('recordatorio')
+  })
+  it('lo de antes sigue igual', () => {
+    expect(interpretar('qué hora es')).toBe('hora')
+    expect(interpretar('mostrame la H2C')).toBe('verCamara')
+    expect(interpretar('cuánto tiempo llevo sentado')).toBe('tiempoSentado')
+  })
+})

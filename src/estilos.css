@@ -73,7 +73,7 @@ body {
 
 .lado-info {
   display: grid;
-  grid-template-rows: auto auto 1fr auto; /* estado | lo que oye | mensaje (se estira) | botones */
+  grid-template-rows: auto auto 1fr; /* estado | lo que oye | mensaje (se estira) */
   gap: 8px;
   padding: 14px 18px;
   min-width: 0;
@@ -826,4 +826,31 @@ body {
   .visor-espera .puntos {
     animation: none;
   }
+}
+
+/* Aviso de temporizador o recordatorio */
+.panel-aviso {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+.panel-aviso p {
+  margin: 0;
+}
+.panel-aviso .rotulo-aviso {
+  color: var(--ojo);
+  font-size: 1.05rem;
+}
+.panel-aviso .titulo {
+  font-size: clamp(1.2rem, 4.6vmin, 2rem);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }

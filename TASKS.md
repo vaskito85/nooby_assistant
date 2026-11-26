@@ -23,6 +23,9 @@
 ## Hecho (v0.3.2)
 - [x] Palabra clave con gramática cerrada (llamado/libre) y freno automático de la cámara
 
+## Hecho (v0.5.0)
+- [x] Paciencia al hablar (espera 1 s de silencio y junta los pedazos), temporizadores y recordatorios por voz (agenda persistente en la PC, alarma con reloj/campana, cuenta regresiva en pantalla), "cuánto falta para…", listar/cancelar; se quitaron los botones de Clima y Ya me levanté (quedan por voz)
+
 ## Hecho (v0.4.0)
 - [x] Entrenar la frase de despertar con la voz del usuario (panel + celu + gramática dinámica en el APK)
 
