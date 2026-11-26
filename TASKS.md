@@ -17,6 +17,9 @@
 ## Hecho (v0.3.0)
 - [x] Oído offline (Vosk) + "che nooby" + comandos básicos + nombre configurable en el panel
 
+## Hecho (v0.3.1)
+- [x] Comentarios al irte ("¿Ya te vas?") y al volver ("Hola de nuevo")
+
 ## Pendiente
 - [ ] T016 Probar el oído en el celu: ajustar cómo entiende "che nooby" (ver window.__noobyDebug.oido)
 - [ ] T017 Etapa 2: preguntas libres con una IA (evaluar plan gratis; clave en el servidor de la PC)

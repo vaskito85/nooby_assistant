@@ -35,6 +35,8 @@ Web app de una pantalla (Vite + React + TS) que se muestra en un celu viejo (Gal
   nubi/nuvi/nuby…), "Sí, <nombre>", y comandos fijos (clima, hora, cuánto llevo sentado, ya me levanté, agua, gracias, ayuda).
   Mientras habla el TTS el micrófono se pausa (si no se oiría a sí mismo). `window.__noobyDebug.oido` guarda lo último que entendió.
   Etapa 2 pendiente: preguntas libres con una IA (la clave quedaría en el servidor de la PC, nunca en el celu).
+- Comentarios (`lib/comentarios.ts`, con tests): al irte tras 30 s–5 min sentado dice "¿Ya te vas? Trabajaste poco." (máx. 1 cada 10 min);
+  al volver tras 2 min o más dice "¡Hola de nuevo! ¿Cómo estuvo el recreo? ¿Qué hacemos ahora?". No pisan una alarma de impresión.
 - Sonidos: solo la alarma de la impresión suena como alarma; clima/recordatorios/enojo no tienen "ding" (el enojo solo habla).
 - Depurar el celu: `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>` + CDP; `window.__noobyDebug` trae ciclos, cuadros,
   conCara, msInferencia. La app del celu solo se reinstala si cambia su versionName (si no, se pierden los permisos).

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react'
 import { Cara, type Humor } from './Cara'
 import { Pensamiento } from './Pensamiento'
+import { comentarioPorMovimiento, FRASE_HOLA_DE_NUEVO, FRASE_YA_TE_VAS } from './lib/comentarios'
 import { Mirada } from './lib/mirada'
 import { detectarLlamado, interpretar, type Orden } from './lib/voz'
 import { callar, desbloquear, hablar, sonar, type Sonido } from './lib/audio'
@@ -22,6 +23,7 @@ const MIN = 60_000
 const PERIODO_CAMARA_MS = 120 // ~8 lecturas por segundo: los ojos siguen en tiempo real
 const PENSAMIENTO_CADA_MS = 60_000
 const PENSAMIENTO_DURA_MS = 5000
+
 const TOQUES_PARA_ENOJARSE = 3 // al 4º toque seguido se enoja
 const VENTANA_TOQUES_MS = 5000
 const ENOJO_MS = 6000
@@ -81,6 +83,9 @@ export function App() {
   const toques = useRef<number[]>([])
   const oidoRef = useRef(oido)
   oidoRef.current = oido
+  const avisoRef = useRef<Aviso | null>(null)
+  avisoRef.current = aviso
+  const ultimoYaTeVas = useRef(0)
   const alOirRef = useRef<(d: { text?: string; partial?: string }) => void>(() => {})
   const timerAtento = useRef<number | null>(null)
   const mirada = useRef<Mirada | null>(null)
@@ -219,6 +224,7 @@ export function App() {
         }
       }
       const visible = visibleAntes.current
+      const vistaAnterior = ultimaVista.current // la última vez que te vio ANTES de este cuadro
       if (visible) ultimaVista.current = ahora
       const s = sentado.current.tick(ahora, visible)
       const a = agua.current.tick(ahora, visible)
@@ -226,6 +232,24 @@ export function App() {
       if (s.presente && !presenteAntes.current && ultimaVista.current && ahora - ultimaVista.current < 1000) {
         setSaludo(true)
         window.setTimeout(() => setSaludo(false), 3000)
+      }
+
+      // Comentarios al irte y al volver. No pisan una alarma de la impresión que esté sonando.
+      if (avisoRef.current?.sonido !== 'alarma') {
+        const c = comentarioPorMovimiento({
+          estabaPresente: presenteAntes.current,
+          estaPresente: s.presente,
+          sentadoMs: s.sentadoMs,
+          ahora,
+          vistaAnterior,
+          ultimoYaTeVas: ultimoYaTeVas.current,
+        })
+        if (c === 'yaTeVas') {
+          ultimoYaTeVas.current = ahora
+          lanzarAviso(FRASE_YA_TE_VAS, 'suave', false, { cerrarEn: 8000 })
+        } else if (c === 'holaDeNuevo') {
+          lanzarAviso(FRASE_HOLA_DE_NUEVO, 'suave', false, { cerrarEn: 10_000 })
+        }
       }
       presenteAntes.current = s.presente
       setPresente(s.presente)
