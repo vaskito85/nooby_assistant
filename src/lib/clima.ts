@@ -7,6 +7,10 @@ export interface Clima {
   min: number
   lluvia: number
   descripcion: string
+  /** Código WMO del tiempo (0 despejado, 61 lluvia, 95 tormenta…). Sirve para elegir el dibujo. */
+  codigo: number
+  /** ¿Es de día ahora allá? (de noche se dibuja la luna en vez del sol) */
+  esDia: boolean
 }
 
 export function describirCodigo(c: number): string {
@@ -69,7 +73,7 @@ export async function pedirClima(lat: number, lon: number): Promise<Clima> {
   const directa =
     'https://api.open-meteo.com/v1/forecast' +
     `?latitude=${lat}&longitude=${lon}` +
-    '&current=temperature_2m,apparent_temperature,weather_code' +
+    '&current=temperature_2m,apparent_temperature,weather_code,is_day' +
     '&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
     '&timezone=auto&forecast_days=1'
   const d = await pedirJson(`/api/clima?lat=${lat}&lon=${lon}`, directa, AbortSignal.timeout?.(15_000))
@@ -80,6 +84,8 @@ export async function pedirClima(lat: number, lon: number): Promise<Clima> {
     min: Math.round(d.daily.temperature_2m_min[0]),
     lluvia: d.daily.precipitation_probability_max?.[0] ?? 0,
     descripcion: describirCodigo(d.current.weather_code),
+    codigo: Number(d.current.weather_code) || 0,
+    esDia: d.current.is_day !== 0,
   }
 }
 

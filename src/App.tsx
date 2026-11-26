@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react'
 import { Cara, type Humor } from './Cara'
+import { ClimaAnimado } from './ClimaAnimado'
 import { ImpresoraAnimada } from './ImpresoraAnimada'
+import { PanelClima } from './PanelClima'
 import { PanelImpresora } from './PanelImpresora'
 import { elegirFoto, type FotoRecibida } from './lib/fotos'
 import { Pensamiento } from './Pensamiento'
 import { pcActivo, type ActividadPc } from './lib/actividad'
 import * as dichos from './lib/respuestas'
-import { describirImpresoras, INFORME_VIGENTE_MS, inferirEstado, type EstadoImpresora, type InformeImpresoras } from './lib/impresoras'
+import { describirImpresoras, INFORME_VIGENTE_MS, inferirEstado, ordenarPorRelevancia, type EstadoImpresora, type InformeImpresoras } from './lib/impresoras'
 import { comentarioPorMovimiento, FRASE_HOLA_DE_NUEVO, FRASE_YA_TE_VAS } from './lib/comentarios'
 import { Mirada } from './lib/mirada'
 import { detectarLlamado, esConfirmacion, interpretar, type Orden } from './lib/voz'
 import { callar, desbloquear, hablar, sonar, type Sonido } from './lib/audio'
-import { frase, pedirClima } from './lib/clima'
+import { frase, pedirClima, type Clima } from './lib/clima'
+import { escenaClima } from './lib/escenas'
 import { aplicarRemota, cargarAjustes, guardarAjustes, limpiarLlamadas, temaConfig, type Ajustes } from './lib/config'
 import { conectarLocal, estadoLocal, guardarConfigLocal, leerImpresoras, urlFoto } from './lib/canalLocal'
 import { conectarNtfy } from './lib/ntfy'
@@ -46,6 +49,9 @@ const RETOS = [
   '¡Pará, pará! ¡Estoy trabajando!',
 ]
 
+/** Lo que se muestra cuando pedís algo por voz: un dibujo en lugar de la cara y la info al costado (hasta el OK o 5 minutos). */
+type Vista = { tipo: 'impresoras'; informe: InformeImpresoras } | { tipo: 'clima'; clima: Clima; ciudad: string }
+
 interface Aviso {
   texto: string
   sonido: Sonido
@@ -75,6 +81,7 @@ export function App() {
   const [pensando, setPensando] = useState(false)
   const [informe, setInforme] = useState<InformeImpresoras>({ ts: null, impresoras: [] })
   const [fotos, setFotos] = useState<FotoRecibida[]>([])
+  const [vista, setVista] = useState<Vista | null>(null)
   // Oído: 'sin' = no disponible (navegador común); 'listo' = esperando "che nooby"; 'atento' = ya respondió y escucha el pedido
   const [oido, setOido] = useState<'sin' | 'listo' | 'atento'>('sin')
   const [oyo, setOyo] = useState('')
@@ -112,6 +119,9 @@ export function App() {
   const entrenandoRef = useRef(entrenando)
   entrenandoRef.current = entrenando
   const timerEntrenar = useRef<number | null>(null)
+  const vistaRef = useRef(vista)
+  vistaRef.current = vista
+  const timerVista = useRef<number | null>(null)
   const actividadPcRef = useRef<ActividadPc | null>(null)
   const iniciarEntrenamientoRef = useRef<(frase: string) => void>(() => {})
   const mirada = useRef<Mirada | null>(null)
@@ -442,7 +452,9 @@ export function App() {
     try {
       const c = await pedirClima(lat, lon)
       setNota('')
-      lanzarAviso(frase(c, ciudad), 'suave', false, opciones)
+      // El tiempo se muestra con un dibujo animado (sol, nubes, lluvia…) y los datos al costado, hasta el OK o 5 minutos.
+      abrirVista({ tipo: 'clima', clima: c, ciudad })
+      hablarSolo(frase(c, ciudad), opciones.forzarVoz)
     } catch (e) {
       const detalle = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
       setNota(`No pude traer el clima (${detalle}).`)
@@ -463,6 +475,25 @@ export function App() {
   const responder = (texto: string) => {
     ultimaRespuesta.current = texto
     lanzarAviso(texto, 'suave', false, { cerrarEn: 12_000, forzarVoz: true })
+  }
+
+  // Vistas: el dibujo (impresora, sol, nubes…) toma el lugar de la cara y la info queda al costado.
+  const abrirVista = (v: Vista) => {
+    setVista(v)
+    if (timerVista.current) window.clearTimeout(timerVista.current)
+    timerVista.current = window.setTimeout(() => setVista(null), AVISO_IMPRESORA_MS)
+  }
+  const cerrarVista = () => {
+    if (timerVista.current) window.clearTimeout(timerVista.current)
+    setVista(null)
+  }
+  /** Dice algo en voz alta sin mostrar burbuja (la info ya está en la vista). */
+  const hablarSolo = (texto: string, forzar = false) => {
+    ultimaRespuesta.current = texto
+    if (!forzar && !ajustesRef.current.voz) return
+    setHablando(true)
+    hablar(texto)
+    window.setTimeout(() => setHablando(false), Math.max(2500, texto.length * 75))
   }
 
   const ejecutar = (orden: Orden) => {
@@ -497,13 +528,26 @@ export function App() {
         break
       case 'impresoras':
         void leerImpresoras()
-          .then((d) => responder(describirImpresoras(d, Date.now())))
+          .then((d) => {
+            const texto = describirImpresoras(d, Date.now())
+            const vigente = d.ts != null && Date.now() - d.ts <= INFORME_VIGENTE_MS && d.impresoras.length > 0
+            if (vigente) {
+              // Con datos frescos: la impresora dibujada en lugar de la cara y una tarjeta por impresora al costado.
+              setInforme(d)
+              abrirVista({ tipo: 'impresoras', informe: d })
+              hablarSolo(texto, true)
+            } else {
+              responder(texto) // sin datos (o viejos) no hay nada que dibujar: solo lo dice
+            }
+          })
           .catch(() => responder('No pude consultar las impresoras.'))
         break
       case 'chau':
+        cerrarVista()
         responder('De nada.')
         break
       case 'despedida':
+        cerrarVista()
         responder(dichos.despedida(nombre))
         break
       case 'ayuda':
@@ -647,6 +691,11 @@ export function App() {
       mantenerAtento() // mientras habla, no se duerme
     }
     if (!final) return
+    // Con una vista en pantalla (impresoras o clima), "OK" la cierra.
+    if (oidoRef.current === 'atento' && vistaRef.current && esConfirmacion(texto)) {
+      cerrarVista()
+      return
+    }
     const llamado = detectarLlamado(texto, {
       gramatica: typeof window.NoobyNativo?.modoOido === 'function',
       variantes: ajustesRef.current.llamadas,
@@ -744,6 +793,12 @@ export function App() {
                 : 'normal'
 
   const enlaceOk = ntfyOk === true
+  // Cómo se dibuja la impresora de la vista: según la impresora que más importa (error > pausa > imprimiendo…).
+  const estadoVista: EstadoImpresora = (() => {
+    if (vista?.tipo !== 'impresoras') return 'imprimiendo'
+    const p = ordenarPorRelevancia(vista.informe.impresoras)[0]
+    return !p ? 'libre' : p.estado === 'offline' ? 'libre' : p.estado
+  })()
   const estadoAviso: EstadoImpresora = aviso?.estado ?? inferirEstado(aviso?.texto ?? '')
   // La foto que llegó junto con este aviso (si el agente mandó una).
   const fotoAviso = aviso?.sonido === 'alarma' ? elegirFoto(fotos, aviso.en ?? 0, aviso.impresora) : null
@@ -771,6 +826,10 @@ export function App() {
             {aviso?.sonido === 'alarma' ? (
               // Aviso de la impresora: en el lugar de la cara, una impresora (mismo tamaño: nada se corre).
               <ImpresoraAnimada estado={estadoAviso} />
+            ) : vista?.tipo === 'impresoras' ? (
+              <ImpresoraAnimada estado={estadoVista} />
+            ) : vista?.tipo === 'clima' ? (
+              <ClimaAnimado escena={escenaClima(vista.clima.codigo, vista.clima.esDia)} />
             ) : (
               <>
                 <Cara humor={humor} alTocar={alTocarCara} />
@@ -808,6 +867,12 @@ export function App() {
                     Entendido
                   </button>
                 </div>
+              ) : vista ? (
+                vista.tipo === 'impresoras' ? (
+                  <PanelImpresora texto="Estado de las impresoras" estado={estadoVista} informe={vista.informe} alOk={cerrarVista} />
+                ) : (
+                  <PanelClima ciudad={vista.ciudad} clima={vista.clima} alOk={cerrarVista} />
+                )
               ) : entrenando ? (
                 <div className="nota escuchando">
                   {entrenando.resultado ? (

@@ -39,6 +39,9 @@
 ## Hecho (v0.4.4)
 - [x] Más frases por voz (fecha, charla, chistes, repetir, despedida…) + lista en el panel
 
+## Hecho (v0.4.5)
+- [x] Vistas por voz: impresora dibujada al pedir su estado; clima con sol/nubes/lluvia/tormenta/nieve/niebla/luna
+
 ## Pendiente
 - [ ] T019 El agente del taller tiene que mandar la foto (POST /api/foto) junto al aviso de terminó/falló
 - [ ] T018 El agente del taller (suite_impresion_3D) tiene que implementar docs/integracion-agente.md
