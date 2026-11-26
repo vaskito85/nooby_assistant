@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react'
 import { Cara, type Humor, type Mirada } from './Cara'
-import { desbloquear, hablar, sonar, type Sonido } from './lib/audio'
+import { callar, desbloquear, hablar, sonar, type Sonido } from './lib/audio'
 import { frase, pedirClima } from './lib/clima'
 import { aplicarRemota, cargarAjustes, guardarAjustes, temaConfig, type Ajustes } from './lib/config'
 import { conectarLocal, estadoLocal } from './lib/canalLocal'
@@ -102,7 +102,7 @@ export function App() {
 
   const entendido = () => {
     cortarAlarma()
-    speechSynthesis?.cancel()
+    callar()
     setAviso(null)
     setHablando(false)
   }
@@ -118,15 +118,30 @@ export function App() {
     } catch {
       /* sin wake lock: el celu puede apagar la pantalla */
     }
+    void iniciarCamara()
+  }
+
+  // En el APK el permiso de cámara se pide en el momento: si todavía no lo contestaste, reintenta.
+  const iniciarCamara = async (intento = 1) => {
     const p = new Presencia()
     try {
       if (!videoRef.current) throw new Error('sin video')
       await p.iniciar(videoRef.current)
       presencia.current = p
       setConCamara(true)
+      setNota('')
     } catch (e) {
+      p.detener()
       setConCamara(false)
-      setNota(`No pude usar la cámara (${e instanceof Error ? e.message : 'error'}). Funciono solo con avisos.`)
+      const motivo = e instanceof Error ? `${e.name}: ${e.message}` : 'error'
+      if (intento < 8) {
+        setNota(`Esperando el permiso de la cámara… (${intento}/8)`)
+        window.setTimeout(() => void iniciarCamara(intento + 1), 4000)
+      } else {
+        setNota(
+          `No pude usar la cámara (${motivo}). Dale permiso a Nooby en Ajustes del celu > Aplicaciones > Nooby > Permisos. Mientras, funciono solo con avisos.`,
+        )
+      }
     }
   }
 

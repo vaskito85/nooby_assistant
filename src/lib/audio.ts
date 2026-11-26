@@ -37,7 +37,23 @@ export function sonar(tipo: Sonido) {
   }
 }
 
+/** Puente que expone el APK: el WebView de Android no trae voz propia, así que usa el TextToSpeech del sistema. */
+declare global {
+  interface Window {
+    NoobyNativo?: { hablar(texto: string): void; callar(): void }
+  }
+}
+
+export function callar() {
+  window.NoobyNativo?.callar()
+  if ('speechSynthesis' in window) speechSynthesis.cancel()
+}
+
 export function hablar(texto: string) {
+  if (window.NoobyNativo) {
+    window.NoobyNativo.hablar(texto)
+    return
+  }
   if (!('speechSynthesis' in window)) return
   speechSynthesis.cancel()
   const u = new SpeechSynthesisUtterance(texto)

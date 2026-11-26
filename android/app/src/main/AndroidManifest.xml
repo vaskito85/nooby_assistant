@@ -8,6 +8,13 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.front" android:required="false" />
 
+    <!-- Android 11+: para poder usar el motor de voz (TextToSpeech) del sistema. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <!-- usesCleartextTraffic: la app habla con http://127.0.0.1 (servidor de la PC por el cable USB). -->
     <application
         android:allowBackup="false"

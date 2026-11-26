@@ -6,8 +6,10 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
+import android.speech.tts.TextToSpeech;
 import android.view.View;
 import android.view.WindowManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -16,23 +18,39 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+
 /**
  * Cáscara mínima: muestra en pantalla completa la web de Nooby que sirve la PC
  * en http://127.0.0.1:8777 (el celu llega ahí por USB con `adb reverse`).
  * Si la PC todavía no está, muestra "esperando" y reintenta solo.
+ * Además le presta a la web dos cosas que el WebView no trae: la cámara (permiso) y la voz (TextToSpeech).
  */
 public class MainActivity extends Activity {
     private static final String ORIGEN = "http://127.0.0.1:8777";
     private static final int PEDIDO_CAMARA = 7;
 
     private WebView web;
-    private PermissionRequest pendiente;
+
+    // Cámara: la web puede pedirla mientras el diálogo del sistema todavía está abierto.
+    // Se juntan los pedidos y se responden todos cuando el usuario contesta (un solo diálogo).
+    private final List<PermissionRequest> pendientes = new ArrayList<>();
+    private boolean pidiendoCamara = false;
+
+    // Voz
+    private TextToSpeech tts;
+    private boolean ttsListo = false;
+    private String textoPendiente = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.parseColor("#070B16")));
+
+        iniciarVoz();
 
         web = new WebView(this);
         web.setBackgroundColor(Color.parseColor("#070B16"));
@@ -41,52 +59,110 @@ public class MainActivity extends Activity {
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
-        s.setMediaPlaybackRequiresUserGesture(false); // la voz y las alarmas suenan sin tocar
+        s.setMediaPlaybackRequiresUserGesture(false); // las alarmas suenan sin tocar
         s.setUserAgentString(s.getUserAgentString() + " NoobyApp"); // la web se entera de que es el APK y arranca sola
         WebView.setWebContentsDebuggingEnabled(true); // chrome://inspect para depurar
+
+        web.addJavascriptInterface(new Puente(), "NoobyNativo");
 
         web.setWebViewClient(new WebViewClient() {
             @Override
             public void onReceivedError(WebView v, WebResourceRequest req, WebResourceError err) {
                 if (req.isForMainFrame()) mostrarEspera();
             }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest req) {
+                // Solo se navega dentro de la web de Nooby.
+                return !req.getUrl().toString().startsWith(ORIGEN);
+            }
         });
 
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
-                runOnUiThread(() -> {
-                    // Solo la propia web de Nooby puede usar la cámara.
-                    if (!request.getOrigin().toString().startsWith(ORIGEN)) {
-                        request.deny();
-                        return;
-                    }
-                    if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                        request.grant(request.getResources());
-                    } else {
-                        pendiente = request;
-                        requestPermissions(new String[] {Manifest.permission.CAMERA}, PEDIDO_CAMARA);
-                    }
-                });
+                runOnUiThread(() -> atenderPermiso(request));
             }
         });
-
-        if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[] {Manifest.permission.CAMERA}, PEDIDO_CAMARA);
-        }
 
         web.loadUrl(ORIGEN + "/");
     }
 
+    // ---------- cámara ----------
+    private boolean camaraConcedida() {
+        return Build.VERSION.SDK_INT < 23
+                || checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void atenderPermiso(PermissionRequest request) {
+        // Solo la propia web de Nooby puede usar la cámara.
+        if (!request.getOrigin().toString().startsWith(ORIGEN)) {
+            request.deny();
+            return;
+        }
+        if (camaraConcedida()) {
+            request.grant(request.getResources());
+            return;
+        }
+        pendientes.add(request);
+        if (!pidiendoCamara) {
+            pidiendoCamara = true;
+            requestPermissions(new String[] {Manifest.permission.CAMERA}, PEDIDO_CAMARA);
+        }
+    }
+
     @Override
     public void onRequestPermissionsResult(int code, String[] permisos, int[] resultados) {
-        if (code == PEDIDO_CAMARA && pendiente != null) {
-            if (resultados.length > 0 && resultados[0] == PackageManager.PERMISSION_GRANTED) {
-                pendiente.grant(pendiente.getResources());
-            } else {
-                pendiente.deny();
+        if (code != PEDIDO_CAMARA) return;
+        // Resultado vacío = el pedido se canceló (llegó otro encima): no se responde nada todavía.
+        if (resultados.length == 0) return;
+        pidiendoCamara = false;
+        boolean ok = resultados[0] == PackageManager.PERMISSION_GRANTED;
+        for (PermissionRequest r : pendientes) {
+            if (ok) r.grant(r.getResources());
+            else r.deny();
+        }
+        pendientes.clear();
+    }
+
+    // ---------- voz ----------
+    private void iniciarVoz() {
+        tts = new TextToSpeech(this, status -> {
+            if (status != TextToSpeech.SUCCESS) return;
+            int r = tts.setLanguage(new Locale("es", "AR"));
+            if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+                r = tts.setLanguage(new Locale("es", "ES"));
             }
-            pendiente = null;
+            if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
+                tts.setLanguage(new Locale("es"));
+            }
+            ttsListo = true;
+            if (textoPendiente != null) {
+                tts.speak(textoPendiente, TextToSpeech.QUEUE_FLUSH, null, "nooby");
+                textoPendiente = null;
+            }
+        });
+    }
+
+    /** Lo que la web puede llamar como window.NoobyNativo.hablar("...") */
+    private class Puente {
+        @JavascriptInterface
+        public void hablar(final String texto) {
+            runOnUiThread(() -> {
+                if (ttsListo && tts != null) {
+                    tts.speak(texto, TextToSpeech.QUEUE_FLUSH, null, "nooby");
+                } else {
+                    textoPendiente = texto;
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void callar() {
+            runOnUiThread(() -> {
+                textoPendiente = null;
+                if (tts != null) tts.stop();
+            });
         }
     }
 
@@ -126,6 +202,10 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
+        }
         web.destroy();
         super.onDestroy();
     }
