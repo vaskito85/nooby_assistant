@@ -78,6 +78,7 @@ public class MainActivity extends Activity {
             "[\"che nube\", \"che nubes\", \"che nuevo\", \"nube\", \"nubes\", \"[unk]\"]";
     private Model modelo;
     private Oyente servicioVoz;
+    private Oyente oyenteAnterior; // el que se está cerrando: el nuevo espera a que suelte el micrófono
     private Recognizer recActual;
     private String modoOido = "llamado";
     private boolean oidoPausado = false;
@@ -204,7 +205,8 @@ public class MainActivity extends Activity {
                     : new Recognizer(modelo, FRECUENCIA);
             recActual = rec;
             // En modo "libre" además se guarda el audio de cada frase para que la web lo transcriba mejor (Whisper).
-            servicioVoz = new Oyente(rec, oidoPausado, !"llamado".equals(modoOido)); // si justo estaba hablando, arranca en pausa
+            servicioVoz = new Oyente(rec, oidoPausado, !"llamado".equals(modoOido), oyenteAnterior); // si justo estaba hablando, arranca en pausa
+            oyenteAnterior = null;
             servicioVoz.start();
             avisarJs("nooby-oido-listo", modoOido);
         } catch (IOException e) {
@@ -230,6 +232,7 @@ public class MainActivity extends Activity {
         modoOido = modo;
         if (modelo == null || servicioVoz == null) return; // todavía no arrancó: arrancará ya en este modo
         servicioVoz.detener();
+        oyenteAnterior = servicioVoz;
         servicioVoz = null;
         final Recognizer vieja = recActual;
         recActual = null;
@@ -277,7 +280,10 @@ public class MainActivity extends Activity {
         private final ArrayDeque<byte[]> previo = new ArrayDeque<>(); // un poquito de audio de antes de que empiece a oír
         private boolean grabando = false;
 
-        Oyente(Recognizer rec, boolean pausaInicial, boolean capturar) {
+        private final Thread esperarA;
+
+        Oyente(Recognizer rec, boolean pausaInicial, boolean capturar, Thread esperarA) {
+            this.esperarA = esperarA;
             this.rec = rec;
             this.pausa = pausaInicial;
             this.capturar = capturar;
@@ -304,13 +310,36 @@ public class MainActivity extends Activity {
             int minimo = AudioRecord.getMinBufferSize((int) FRECUENCIA, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
             AudioRecord grabador = null;
             try {
-                grabador = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, (int) FRECUENCIA,
-                        AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(minimo, 32000));
-                if (grabador.getState() != AudioRecord.STATE_INITIALIZED) {
-                    avisarEnUi("nooby-oido-error", "No pude abrir el micrófono");
+                // El hilo anterior tiene que soltar el micrófono antes de abrirlo de nuevo (si no, start() falla con -38).
+                if (esperarA != null) {
+                    try {
+                        esperarA.join(2000);
+                    } catch (InterruptedException e) {
+                        return;
+                    }
+                }
+                // Por las dudas se reintenta unos instantes: el micrófono puede tardar en quedar libre.
+                for (int intento = 0; intento < 20 && !terminar; intento++) {
+                    AudioRecord nuevo = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, (int) FRECUENCIA,
+                            AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(minimo, 32000));
+                    if (nuevo.getState() == AudioRecord.STATE_INITIALIZED) {
+                        nuevo.startRecording();
+                        if (nuevo.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+                            grabador = nuevo;
+                            break;
+                        }
+                    }
+                    nuevo.release();
+                    try {
+                        Thread.sleep(150);
+                    } catch (InterruptedException e) {
+                        return;
+                    }
+                }
+                if (grabador == null) {
+                    if (!terminar) avisarEnUi("nooby-oido-error", "No pude abrir el micrófono");
                     return;
                 }
-                grabador.startRecording();
                 short[] buf = new short[2048]; // unos 128 ms
                 while (!terminar) {
                     int n = grabador.read(buf, 0, buf.length);
