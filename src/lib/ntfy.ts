@@ -11,9 +11,11 @@ export function conectarNtfy(
   tema: string,
   alMensaje: (m: MensajeNtfy) => void,
   alEstado: (conectado: boolean) => void,
+  /** Con `since=latest` el tema entrega al conectar el último mensaje guardado (lo usa la configuración). */
+  ultimo = false,
 ): () => void {
   const base = servidor.replace(/\/+$/, '')
-  const es = new EventSource(`${base}/${encodeURIComponent(tema)}/sse`)
+  const es = new EventSource(`${base}/${encodeURIComponent(tema)}/sse${ultimo ? '?since=latest' : ''}`)
   es.onopen = () => alEstado(true)
   es.onerror = () => alEstado(false)
   es.onmessage = (e) => {

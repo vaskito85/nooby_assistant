@@ -374,3 +374,75 @@ body {
     animation: none;
   }
 }
+
+/* enojado: ojos achatados con cejas en V, boca triste y temblor */
+.cara[data-humor='enojado'] {
+  animation: temblor 0.18s infinite;
+}
+.cara[data-humor='enojado'] .ojo {
+  position: relative;
+  aspect-ratio: 2 / 1.5;
+  background: #f97316;
+  box-shadow: 0 0 50px #f9731666;
+  animation: none;
+}
+.cara[data-humor='enojado'] .ojo::before {
+  content: '';
+  position: absolute;
+  left: -12%;
+  right: -12%;
+  top: -22%;
+  height: 14px;
+  border-radius: 8px;
+  background: #f97316;
+}
+.cara[data-humor='enojado'] .ojo:first-child::before {
+  transform: rotate(22deg);
+}
+.cara[data-humor='enojado'] .ojo:last-child::before {
+  transform: rotate(-22deg);
+}
+.cara[data-humor='enojado'] .boca {
+  width: 24%;
+  border-bottom: 0;
+  border-top: 6px solid #f97316;
+  border-radius: 60px 60px 0 0;
+}
+
+.pie {
+  text-align: center;
+  padding-bottom: 14px;
+}
+
+/* ---------- panel (PC) ---------- */
+.panel-pagina {
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+  padding-top: 24px;
+  gap: 16px;
+}
+.panel-pagina h1 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+.panel-pagina h2 {
+  margin: 0 0 4px;
+  font-size: 1.1rem;
+}
+.panel-pagina .ajustes {
+  margin: 0;
+}
+.panel-pagina .ajustes > .boton {
+  margin-top: 12px;
+}
+.boton.principal {
+  background: var(--ojo);
+  color: #04201c;
+  border: 0;
+  font-weight: 700;
+}
+.ajustes input[readonly] {
+  margin-top: 8px;
+  font-size: 0.8rem;
+}

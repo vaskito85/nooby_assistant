@@ -9,7 +9,11 @@ Web app de una pantalla (Vite + React + TS, sin backend) que se abre a pantalla 
   (`lib/sentado.ts`, lógica pura con tests) y recuerda tomar agua.
 - Avisos externos por **ntfy** (SSE): cualquier mensaje al tema suena como alarma y aparece en la cara
   ("Che, la impresión terminó"). Quien avisa (el agente del taller, un script…) solo hace un POST a ntfy.
-- Botón de clima (Open-Meteo, sin clave). Voz con `speechSynthesis` (es-AR).
+- Botón de clima (Open-Meteo, sin clave; pasa por `/api/*` de Vercel y cae a directo). Voz con `speechSynthesis` (es-AR).
+- **Los ajustes se hacen en el PANEL de la PC** (`/#/panel`, `src/Panel.tsx`), no en el celu. El panel publica la config
+  (JSON) en el tema `<tema>-cfg` de ntfy; el celu se suscribe con `since=latest` y la guarda en localStorage.
+  El celu recibe el tema una sola vez por link (`/?tema=…`, que se borra de la barra). Ntfy retiene 12 h; el celu guarda lo último.
+- Los ojos siguen la cara detectada (y el dedo); 4 toques en 5 s sobre la cara la enojan. Pantalla completa al primer toque.
 
 ## Comandos
 ```
@@ -28,7 +32,7 @@ public/mediapipe/  WASM copiado de node_modules por scripts/copiar-wasm.mjs (pos
 ```
 
 ## Reglas
-- NUNCA scroll horizontal (probar en 375 px). Ajustes plegables.
+- NUNCA scroll horizontal (probar en 375 px). El celu no tiene pantalla de ajustes: todo va por el panel.
 - El video no se graba ni se sube: solo se analiza cuadro a cuadro en el celu.
 - El tema de ntfy es un secreto: no commitearlo; se guarda en localStorage (o `?tema=` en la URL la primera vez).
 - Audio, cámara y wake lock exigen un toque del usuario: por eso la pantalla de inicio.

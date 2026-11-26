@@ -1,14 +1,23 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Cara, type Humor } from './Cara'
+import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react'
+import { Cara, type Humor, type Mirada } from './Cara'
 import { desbloquear, hablar, sonar, type Sonido } from './lib/audio'
-import { BuscadorCiudad } from './BuscadorCiudad'
-import { frase, pedirClima, type Ciudad } from './lib/clima'
-import { cargarAjustes, guardarAjustes, type Ajustes } from './lib/config'
-import { conectarNtfy, enviarNtfy } from './lib/ntfy'
+import { frase, pedirClima } from './lib/clima'
+import { aplicarRemota, cargarAjustes, guardarAjustes, temaConfig, type Ajustes } from './lib/config'
+import { conectarNtfy } from './lib/ntfy'
 import { Presencia } from './lib/presencia'
 import { Sentado } from './lib/sentado'
 
 const MIN = 60_000
+const TOQUES_PARA_ENOJARSE = 3 // al 4º toque seguido se enoja
+const VENTANA_TOQUES_MS = 5000
+const ENOJO_MS = 6000
+
+const RETOS = [
+  '¡Basta! ¡Dejame tranquilo!',
+  '¡Eh! ¡No me toques más!',
+  '¡Ya está bien! ¡Me vas a gastar la pantalla!',
+  '¡Pará, pará! ¡Estoy trabajando!',
+]
 
 interface Aviso {
   texto: string
@@ -28,9 +37,17 @@ export function App() {
   const [aviso, setAviso] = useState<Aviso | null>(null)
   const [hablando, setHablando] = useState(false)
   const [saludo, setSaludo] = useState(false)
+  const [mimo, setMimo] = useState(false)
+  const [enojado, setEnojado] = useState(false)
   const [ausenteLargo, setAusenteLargo] = useState(false)
+  const [miradaCara, setMiradaCara] = useState<Mirada | null>(null)
+  const [miradaDedo, setMiradaDedo] = useState<Mirada | null>(null)
   const [ntfyOk, setNtfyOk] = useState<boolean | null>(null)
   const [nota, setNota] = useState('')
+
+  // Los ajustes cambian desde la PC; los timers leen siempre el valor vigente por ref.
+  const ajustesRef = useRef(ajustes)
+  ajustesRef.current = ajustes
 
   const videoRef = useRef<HTMLVideoElement>(null)
   const presencia = useRef<Presencia | null>(null)
@@ -38,13 +55,17 @@ export function App() {
     new Sentado({ limiteMs: ajustes.sentadoMin * MIN, graciaMs: 10_000, ausenciaResetMs: 5 * MIN, repetirMs: 10 * MIN }),
   )
   const agua = useRef(
-    new Sentado({ limiteMs: ajustes.aguaMin * MIN, graciaMs: 10_000, ausenciaResetMs: 15 * MIN, repetirMs: ajustes.aguaMin * MIN }),
+    new Sentado({ limiteMs: ajustes.aguaMin * MIN, graciaMs: 10_000, ausenciaResetMs: 15 * MIN, repetirMs: Math.max(1, ajustes.aguaMin) * MIN }),
   )
   const alarma = useRef<number | null>(null)
   const presenteAntes = useRef(false)
   const ultimaVista = useRef(0)
+  const visibleAntes = useRef(false)
+  const toques = useRef<number[]>([])
+  const timerDedo = useRef<number | null>(null)
+  const timerEnojo = useRef<number | null>(null)
 
-  // Cambios en los ajustes de tiempos se aplican al contador en marcha.
+  // Cambios de tiempos (llegan desde el panel) se aplican al contador en marcha.
   useEffect(() => {
     sentado.current.cfg.limiteMs = ajustes.sentadoMin * MIN
     agua.current.cfg.limiteMs = ajustes.aguaMin * MIN
@@ -61,7 +82,7 @@ export function App() {
       cortarAlarma()
       setAviso({ texto, sonido })
       sonar(sonido)
-      if (ajustes.voz) {
+      if (ajustesRef.current.voz) {
         setHablando(true)
         hablar(texto)
         window.setTimeout(() => setHablando(false), 2500)
@@ -74,7 +95,7 @@ export function App() {
         }, 6000)
       }
     },
-    [ajustes.voz, cortarAlarma],
+    [cortarAlarma],
   )
 
   const entendido = () => {
@@ -84,8 +105,10 @@ export function App() {
     setHablando(false)
   }
 
-  // Arranque: lo dispara el primer toque (audio, cámara y pantalla encendida piden un gesto).
+  // Arranque: lo dispara el primer toque (pantalla completa, audio, cámara y pantalla encendida piden un gesto).
   const empezar = async () => {
+    // Lo primero, antes de cualquier await: el navegador solo la concede dentro del gesto.
+    void document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).catch(() => {})
     desbloquear()
     setFase('activo')
     try {
@@ -105,12 +128,32 @@ export function App() {
     }
   }
 
-  // Revisa la cámara ~1.4 veces por segundo y actualiza los contadores.
+  // El navegador suelta la pantalla encendida al ocultarse la página: se vuelve a pedir.
+  useEffect(() => {
+    if (fase !== 'activo') return
+    const volver = () => {
+      if (document.visibilityState === 'visible') void navigator.wakeLock?.request('screen').catch(() => {})
+    }
+    document.addEventListener('visibilitychange', volver)
+    return () => document.removeEventListener('visibilitychange', volver)
+  }, [fase])
+
+  // Mira la cámara ~2 veces por segundo: presencia, contadores y hacia dónde mirar.
   useEffect(() => {
     if (fase !== 'activo' || !conCamara) return
     const id = window.setInterval(() => {
       const ahora = Date.now()
-      const visible = presencia.current?.hayCara() ?? false
+      const cara = presencia.current?.buscarCara()
+      if (cara !== undefined) {
+        visibleAntes.current = cara !== null
+        if (cara) {
+          // Suaviza para que los ojos no tiemblen.
+          setMiradaCara((m) => (m ? { x: m.x * 0.5 + cara.x * 0.5, y: m.y * 0.5 + cara.y * 0.5 } : cara))
+        } else {
+          setMiradaCara(null)
+        }
+      }
+      const visible = visibleAntes.current
       if (visible) ultimaVista.current = ahora
       const s = sentado.current.tick(ahora, visible)
       const a = agua.current.tick(ahora, visible)
@@ -126,12 +169,12 @@ export function App() {
 
       if (s.avisar) {
         lanzarAviso(`Llevás ${minutos(s.sentadoMs)} minutos sentado. Levantate un ratito.`, 'suave', false)
-      } else if (a.avisar && ajustes.aguaMin > 0) {
+      } else if (a.avisar && ajustesRef.current.aguaMin > 0) {
         lanzarAviso('Che, tomá un poco de agua.', 'suave', false)
       }
-    }, 700)
+    }, 450)
     return () => window.clearInterval(id)
-  }, [fase, conCamara, lanzarAviso, ajustes.aguaMin])
+  }, [fase, conCamara, lanzarAviso])
 
   // Avisos que llegan de afuera (la impresión, lo que quieras) por ntfy.
   useEffect(() => {
@@ -147,9 +190,30 @@ export function App() {
     )
   }, [fase, ajustes.servidor, ajustes.tema, lanzarAviso])
 
+  // Ajustes que llegan del panel de la PC. Al conectar entrega el último guardado.
+  useEffect(() => {
+    if (!ajustes.tema) return
+    return conectarNtfy(
+      ajustes.servidor,
+      temaConfig(ajustes.tema),
+      (m) => {
+        try {
+          const nuevo = aplicarRemota(ajustesRef.current, JSON.parse(m.mensaje))
+          guardarAjustes(nuevo)
+          setAjustes(nuevo)
+        } catch {
+          /* mensaje que no es una configuración: se ignora */
+        }
+      },
+      () => {},
+      true,
+    )
+  }, [ajustes.servidor, ajustes.tema])
+
   useEffect(() => () => presencia.current?.detener(), [])
 
-  const verClima = async (lat = ajustes.lat, lon = ajustes.lon, ciudad = ajustes.ciudad) => {
+  const verClima = async () => {
+    const { lat, lon, ciudad } = ajustesRef.current
     setNota('Mirando el cielo…')
     try {
       const c = await pedirClima(lat, lon)
@@ -161,54 +225,68 @@ export function App() {
     }
   }
 
-  const elegirCiudad = (c: Ciudad) => {
-    const nuevo = { ...ajustes, ciudad: c.nombre, lat: c.lat, lon: c.lon }
-    setAjustes(nuevo)
-    guardarAjustes(nuevo)
-    void verClima(c.lat, c.lon, c.nombre) // carga el clima al toque
-  }
-
-  const probarAviso = async () => {
-    const texto = 'Che, la impresión terminó'
-    if (!ajustes.tema) return lanzarAviso(texto, 'alarma', true)
-    try {
-      await enviarNtfy(ajustes.servidor, ajustes.tema, texto) // vuelve por ntfy y salta solo
-      setNota('Prueba enviada: debería sonar en unos segundos.')
-    } catch {
-      setNota('No pude mandar la prueba a ntfy.')
+  // Toques sobre la cara: hasta 3 seguidos le dan gracia; el 4º en 5 s la enoja.
+  const alTocarCara = () => {
+    const ahora = Date.now()
+    toques.current = [...toques.current.filter((t) => ahora - t < VENTANA_TOQUES_MS), ahora]
+    if (toques.current.length > TOQUES_PARA_ENOJARSE) {
+      toques.current = []
+      setEnojado(true)
+      sonar('alarma')
+      if (ajustesRef.current.voz) hablar(RETOS[Math.floor(Math.random() * RETOS.length)])
+      if (timerEnojo.current) window.clearTimeout(timerEnojo.current)
+      timerEnojo.current = window.setTimeout(() => setEnojado(false), ENOJO_MS)
+    } else {
+      setMimo(true)
+      window.setTimeout(() => setMimo(false), 700)
     }
   }
 
-  const cambiar = <K extends keyof Ajustes>(k: K, v: Ajustes[K]) => {
-    const nuevo = { ...ajustes, [k]: v }
-    setAjustes(nuevo)
-    guardarAjustes(nuevo)
+  // Los ojos también siguen al dedo un ratito.
+  const seguirDedo = (e: PointerEvent) => {
+    setMiradaDedo({
+      x: (e.clientX / window.innerWidth - 0.5) * 2,
+      y: (e.clientY / window.innerHeight - 0.5) * 2,
+    })
+    if (timerDedo.current) window.clearTimeout(timerDedo.current)
+    timerDedo.current = window.setTimeout(() => setMiradaDedo(null), 1500)
   }
 
-  const humor: Humor = aviso?.sonido === 'alarma'
-    ? 'alerta'
-    : hablando || aviso
-      ? 'hablando'
-      : saludo
-        ? 'feliz'
-        : conCamara && ausenteLargo
-          ? 'dormido'
-          : 'normal'
+  const humor: Humor =
+    aviso?.sonido === 'alarma'
+      ? 'alerta'
+      : enojado
+        ? 'enojado'
+        : hablando || aviso
+          ? 'hablando'
+          : mimo || saludo
+            ? 'feliz'
+            : conCamara && ausenteLargo
+              ? 'dormido'
+              : 'normal'
+
+  const mirada = humor === 'dormido' ? null : (miradaDedo ?? miradaCara)
 
   return (
-    <main className="app">
+    <main className="app" onPointerDown={seguirDedo}>
       <video ref={videoRef} className="video-oculto" playsInline muted />
 
       {fase === 'inicio' ? (
         <button className="inicio" onClick={empezar}>
-          <Cara humor="normal" />
+          <Cara humor="normal" mirada={null} />
           <span className="inicio-texto">Tocá para despertar a Nooby</span>
-          <small>Va a pedir permiso para la cámara. El video no sale del celu.</small>
+          {ajustes.tema ? (
+            <small>Va a pedir permiso para la cámara. El video no sale del celu.</small>
+          ) : (
+            <small>
+              Falta conectarlo: en la PC abrí <strong>/#/panel</strong> y abrí en este celu el link que te da.
+            </small>
+          )}
         </button>
       ) : (
         <>
           <section className="escenario">
-            <Cara humor={humor} />
+            <Cara humor={humor} mirada={mirada} alTocar={alTocarCara} />
             {aviso ? (
               <div className={`burbuja ${aviso.sonido}`} role="alert">
                 <p>{aviso.texto}</p>
@@ -247,52 +325,9 @@ export function App() {
             </button>
           </nav>
 
-          <details className="ajustes">
-            <summary>Ajustes</summary>
-            <label>
-              Tema de ntfy (secreto, largo)
-              <input
-                value={ajustes.tema}
-                onChange={(e) => cambiar('tema', e.target.value.trim())}
-                placeholder="taller-x7k2q9..."
-                autoCapitalize="none"
-                autoCorrect="off"
-              />
-            </label>
-            <label>
-              Servidor ntfy
-              <input value={ajustes.servidor} onChange={(e) => cambiar('servidor', e.target.value.trim())} />
-            </label>
-            <label>
-              Avisar sentado cada (min)
-              <input
-                type="number"
-                min={1}
-                value={ajustes.sentadoMin}
-                onChange={(e) => cambiar('sentadoMin', Math.max(1, Number(e.target.value) || 60))}
-              />
-            </label>
-            <label>
-              Recordar agua cada (min, 0 = no)
-              <input
-                type="number"
-                min={0}
-                value={ajustes.aguaMin}
-                onChange={(e) => cambiar('aguaMin', Math.max(0, Number(e.target.value) || 0))}
-              />
-            </label>
-            <BuscadorCiudad actual={ajustes.ciudad} alElegir={elegirCiudad} />
-            <label className="check">
-              <input type="checkbox" checked={ajustes.voz} onChange={(e) => cambiar('voz', e.target.checked)} />
-              Hablar en voz alta
-            </label>
-            <button className="boton" onClick={probarAviso}>
-              Probar aviso de impresión
-            </button>
-            <p className="chico">
-              ntfy: {ntfyOk === null ? 'sin tema configurado' : ntfyOk ? 'conectado ✓' : 'sin conexión'}
-            </p>
-          </details>
+          <p className="chico pie">
+            {ntfyOk === null ? 'Sin tema: falta conectar con la PC' : ntfyOk ? 'Conectado ✓' : 'Sin conexión con ntfy'}
+          </p>
         </>
       )}
     </main>
