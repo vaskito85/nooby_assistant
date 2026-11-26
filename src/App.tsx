@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react'
-import { Cara, type Humor, type Mirada } from './Cara'
+import { Cara, type Humor } from './Cara'
+import { Pensamiento } from './Pensamiento'
+import { Mirada } from './lib/mirada'
 import { callar, desbloquear, hablar, sonar, type Sonido } from './lib/audio'
 import { frase, pedirClima } from './lib/clima'
 import { aplicarRemota, cargarAjustes, guardarAjustes, temaConfig, type Ajustes } from './lib/config'
@@ -8,7 +10,17 @@ import { conectarNtfy } from './lib/ntfy'
 import { Presencia } from './lib/presencia'
 import { Sentado } from './lib/sentado'
 
+declare global {
+  interface Window {
+    /** Contadores internos del detector, para depurar desde chrome://inspect. */
+    __noobyDebug?: Record<string, number>
+  }
+}
+
 const MIN = 60_000
+const PERIODO_CAMARA_MS = 120 // ~8 lecturas por segundo: los ojos siguen en tiempo real
+const PENSAMIENTO_CADA_MS = 60_000
+const PENSAMIENTO_DURA_MS = 5000
 const TOQUES_PARA_ENOJARSE = 3 // al 4º toque seguido se enoja
 const VENTANA_TOQUES_MS = 5000
 const ENOJO_MS = 6000
@@ -34,15 +46,14 @@ export function App() {
   const [fase, setFase] = useState<'inicio' | 'activo'>('inicio')
   const [presente, setPresente] = useState(false)
   const [conCamara, setConCamara] = useState(false)
-  const [sentadoMs, setSentadoMs] = useState(0)
+  const [sentadoMin, setSentadoMin] = useState(0) // solo minutos enteros: no re-renderiza 8 veces por segundo
   const [aviso, setAviso] = useState<Aviso | null>(null)
   const [hablando, setHablando] = useState(false)
   const [saludo, setSaludo] = useState(false)
   const [mimo, setMimo] = useState(false)
   const [enojado, setEnojado] = useState(false)
   const [ausenteLargo, setAusenteLargo] = useState(false)
-  const [miradaCara, setMiradaCara] = useState<Mirada | null>(null)
-  const [miradaDedo, setMiradaDedo] = useState<Mirada | null>(null)
+  const [pensando, setPensando] = useState(false)
   const [ntfyOk, setNtfyOk] = useState<boolean | null>(null)
   const [modo, setModo] = useState<'detectando' | 'local' | 'ntfy'>('detectando')
   const [nota, setNota] = useState('')
@@ -64,7 +75,11 @@ export function App() {
   const ultimaVista = useRef(0)
   const visibleAntes = useRef(false)
   const toques = useRef<number[]>([])
+  const mirada = useRef<Mirada | null>(null)
+  const dedoActivo = useRef(false)
   const timerDedo = useRef<number | null>(null)
+  const timerPensando = useRef<number | null>(null)
+  const enlaceAntes = useRef<boolean | null>(null)
   const timerEnojo = useRef<number | null>(null)
 
   // Cambios de tiempos (llegan desde el panel) se aplican al contador en marcha.
@@ -165,19 +180,27 @@ export function App() {
     return () => document.removeEventListener('visibilitychange', volver)
   }, [fase])
 
-  // Mira la cámara ~2 veces por segundo: presencia, contadores y hacia dónde mirar.
+  // Mira la cámara ~8 veces por segundo: presencia, contadores y hacia dónde miran los ojos.
   useEffect(() => {
     if (fase !== 'activo' || !conCamara) return
+    const dbg = (window.__noobyDebug = { ciclos: 0, cuadros: 0, conCara: 0, msInferencia: 0, ultimaCara: 0 })
     const id = window.setInterval(() => {
       const ahora = Date.now()
+      const t0 = performance.now()
       const cara = presencia.current?.buscarCara()
+      dbg.ciclos++
       if (cara !== undefined) {
+        dbg.cuadros++
+        dbg.msInferencia = Math.round(performance.now() - t0)
         visibleAntes.current = cara !== null
         if (cara) {
-          // Suaviza para que los ojos no tiemblen.
-          setMiradaCara((m) => (m ? { x: m.x * 0.5 + cara.x * 0.5, y: m.y * 0.5 + cara.y * 0.5 } : cara))
-        } else {
-          setMiradaCara(null)
+          dbg.conCara++
+          dbg.ultimaCara = ahora
+        }
+        // El dedo manda un rato; si no, los ojos siguen la cara (o vuelven al centro).
+        if (!dedoActivo.current) {
+          if (cara) mirada.current?.apuntar(cara.x, cara.y)
+          else mirada.current?.descansar()
         }
       }
       const visible = visibleAntes.current
@@ -191,7 +214,7 @@ export function App() {
       }
       presenteAntes.current = s.presente
       setPresente(s.presente)
-      setSentadoMs(s.sentadoMs)
+      setSentadoMin(minutos(s.sentadoMs))
       setAusenteLargo(!s.presente && ultimaVista.current > 0 && ahora - ultimaVista.current > 30_000)
 
       if (s.avisar) {
@@ -199,9 +222,37 @@ export function App() {
       } else if (a.avisar && ajustesRef.current.aguaMin > 0) {
         lanzarAviso('Che, tomá un poco de agua.', 'suave', false)
       }
-    }, 450)
+    }, PERIODO_CAMARA_MS)
     return () => window.clearInterval(id)
   }, [fase, conCamara, lanzarAviso])
+
+  // Los ojos se mueven fuera de React: un objeto que los anima cuadro a cuadro.
+  useEffect(() => {
+    const m = new Mirada(document.documentElement)
+    mirada.current = m
+    return () => m.detener()
+  }, [])
+
+  // Globito pensador: cada tanto muestra el estado de la conexión con la PC (✓ o ✗).
+  const mostrarPensamiento = useCallback(() => {
+    setPensando(true)
+    if (timerPensando.current) window.clearTimeout(timerPensando.current)
+    timerPensando.current = window.setTimeout(() => setPensando(false), PENSAMIENTO_DURA_MS)
+  }, [])
+  useEffect(() => {
+    if (fase !== 'activo') return
+    const primero = window.setTimeout(mostrarPensamiento, 6000)
+    const id = window.setInterval(mostrarPensamiento, PENSAMIENTO_CADA_MS)
+    return () => {
+      window.clearTimeout(primero)
+      window.clearInterval(id)
+    }
+  }, [fase, mostrarPensamiento])
+  useEffect(() => {
+    // Si la conexión cambia (se cae o vuelve) lo cuenta en el momento.
+    if (ntfyOk !== null && enlaceAntes.current !== null && ntfyOk !== enlaceAntes.current) mostrarPensamiento()
+    if (ntfyOk !== null) enlaceAntes.current = ntfyOk
+  }, [ntfyOk, mostrarPensamiento])
 
   // ¿Me sirve el servidor de la PC (USB)? Si sí, todo va por ahí; si no (Vercel), por ntfy.
   useEffect(() => {
@@ -302,12 +353,13 @@ export function App() {
 
   // Los ojos también siguen al dedo un ratito.
   const seguirDedo = (e: PointerEvent) => {
-    setMiradaDedo({
-      x: (e.clientX / window.innerWidth - 0.5) * 2,
-      y: (e.clientY / window.innerHeight - 0.5) * 2,
-    })
+    dedoActivo.current = true
+    mirada.current?.apuntar((e.clientX / window.innerWidth - 0.5) * 2, (e.clientY / window.innerHeight - 0.5) * 2)
     if (timerDedo.current) window.clearTimeout(timerDedo.current)
-    timerDedo.current = window.setTimeout(() => setMiradaDedo(null), 1500)
+    timerDedo.current = window.setTimeout(() => {
+      dedoActivo.current = false
+      mirada.current?.descansar() // si hay cámara, en el próximo cuadro vuelven a seguir la cara
+    }, 1500)
   }
 
   const humor: Humor =
@@ -323,15 +375,15 @@ export function App() {
               ? 'dormido'
               : 'normal'
 
-  const mirada = humor === 'dormido' ? null : (miradaDedo ?? miradaCara)
+  const enlaceOk = ntfyOk === true
 
   return (
-    <main className="app" onPointerDown={seguirDedo}>
+    <main className="app pantalla" onPointerDown={seguirDedo}>
       <video ref={videoRef} className="video-oculto" playsInline muted />
 
       {fase === 'inicio' ? (
         <button className="inicio" onClick={empezar}>
-          <Cara humor="normal" mirada={null} />
+          <Cara humor="normal" />
           <span className="inicio-texto">Tocá para despertar a Nooby</span>
           {modo === 'local' || ajustes.tema ? (
             <small>Va a pedir permiso para la cámara. El video no sale del celu.</small>
@@ -343,57 +395,54 @@ export function App() {
         </button>
       ) : (
         <>
-          <section className="escenario">
-            <Cara humor={humor} mirada={mirada} alTocar={alTocarCara} />
-            {aviso ? (
-              <div className={`burbuja ${aviso.sonido}`} role="alert">
-                <p>{aviso.texto}</p>
-                <button className={`boton grande ${aviso.sonido}`} onClick={entendido}>
-                  Entendido
-                </button>
-              </div>
-            ) : (
-              <p className="estado">
-                {!conCamara
-                  ? 'Sin cámara'
-                  : presente
-                    ? `Sentado hace ${minutos(sentadoMs)} min`
-                    : ausenteLargo
-                      ? 'Descansando…'
-                      : 'Mirando…'}
-              </p>
-            )}
-            {nota && <p className="nota">{nota}</p>}
+          {/* Un lado: la cara, siempre en el mismo lugar y del mismo tamaño. */}
+          <section className="lado-cara">
+            <Cara humor={humor} alTocar={alTocarCara} />
+            <Pensamiento visible={pensando} ok={enlaceOk} />
           </section>
 
-          <nav className="botones">
-            <button className="boton" onClick={() => verClima()}>
-              ☁ Clima
-            </button>
-            <button
-              className="boton"
-              onClick={() => {
-                sentado.current.descansar()
-                agua.current.descansar()
-                setSentadoMs(0)
-                setNota('Contador en cero.')
-              }}
-            >
-              ↺ Ya me levanté
-            </button>
-          </nav>
+          {/* El otro lado: zonas fijas, así nada se corre cuando cambia el contenido. */}
+          <section className="lado-info">
+            <p className="zona-estado">
+              {!conCamara
+                ? 'Sin cámara'
+                : presente
+                  ? `Sentado hace ${sentadoMin} min`
+                  : ausenteLargo
+                    ? 'Descansando…'
+                    : 'Mirando…'}
+            </p>
 
-          <p className="chico pie">
-            {modo === 'local'
-              ? ntfyOk
-                ? 'Conectado a la PC ✓'
-                : 'Esperando a la PC…'
-              : ntfyOk === null
-                ? 'Sin tema: falta conectar con la PC'
-                : ntfyOk
-                  ? 'Conectado ✓'
-                  : 'Sin conexión con ntfy'}
-          </p>
+            <div className="zona-mensaje">
+              {aviso ? (
+                <div className={`burbuja ${aviso.sonido}`} role="alert">
+                  <p>{aviso.texto}</p>
+                  <button className={`boton grande ${aviso.sonido}`} onClick={entendido}>
+                    Entendido
+                  </button>
+                </div>
+              ) : (
+                nota && <p className="nota">{nota}</p>
+              )}
+            </div>
+
+            <nav className="botones">
+              <button className="boton" onClick={() => verClima()}>
+                ☁ Clima
+              </button>
+              <button
+                className="boton"
+                onClick={() => {
+                  sentado.current.descansar()
+                  agua.current.descansar()
+                  setSentadoMin(0)
+                  setNota('Contador en cero.')
+                }}
+              >
+                ↺ Ya me levanté
+              </button>
+            </nav>
+          </section>
         </>
       )}
     </main>

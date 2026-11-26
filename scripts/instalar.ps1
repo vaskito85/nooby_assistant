@@ -68,6 +68,12 @@ try {
     Write-Host "    $f ..."
     Invoke-WebRequest -UseBasicParsing "$Base/$f" -OutFile (Join-Path $tmp $f)
   }
+  # Versión de la app del celu (opcional: si falta, se reinstala siempre)
+  $versionApk = $null
+  try {
+    Invoke-WebRequest -UseBasicParsing "$Base/apk-version.txt" -OutFile (Join-Path $tmp 'apk-version.txt')
+    $versionApk = (Get-Content (Join-Path $tmp 'apk-version.txt') -Raw).Trim()
+  } catch { }
   $sumas = @{}
   foreach ($l in Get-Content (Join-Path $tmp 'checksums.txt')) {
     if ($l -match '^([0-9a-fA-F]{64})\s+\*?(.+)$') { $sumas[$Matches[2].Trim()] = $Matches[1].ToLower() }
@@ -154,7 +160,18 @@ try {
         $r = Read-Host '    Enter para volver a revisar, o S para saltear el celu'
         if ($r -match '^[sS]') { break }
       }
+      # Solo se reinstala la app si cambió de versión: cada instalación nueva pierde los permisos (cámara).
+      # Las mejoras de la cara llegan con el servidor de la PC, sin tocar el celu.
+      $instalada = $null
       if ($serial) {
+        $linea = (& $adb -s $serial shell dumpsys package com.nooby.asistente) | Select-String 'versionName=' | Select-Object -First 1
+        if ($linea) { $instalada = ($linea.ToString() -replace '.*versionName=', '').Trim() }
+      }
+      if ($serial -and $instalada -and $versionApk -and ($instalada -eq $versionApk)) {
+        Ok "La app del celu ya es la versión ${instalada}: no hace falta reinstalarla (conserva sus permisos)"
+        & $adb -s $serial shell am start -n com.nooby.asistente/.MainActivity | Out-Null
+      }
+      elseif ($serial) {
         Write-Host "    Instalando en $serial (el celu puede pedir confirmación) ..."
         $apk = Join-Path $Dir 'nooby.apk'
         & $adb -s $serial install -r $apk

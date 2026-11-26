@@ -11,7 +11,11 @@
 - [x] Servidor local en la PC + canal USB (adb reverse) + panel en modo local
 - [x] Proyecto APK (cáscara WebView) y workflow de build en GitHub Actions
 
+## Hecho (v0.2.3)
+- [x] Rediseño: layout en dos mitades fijas, cara sin gestos que desacomoden, globito pensador (PC ✓/✗), ojos en tiempo real
+
 ## Pendiente
+- [ ] T015 Verificar en el celu que el detector ve la cara (window.__noobyDebug) y ajustar ganancia de los ojos
 - [ ] T012 Probar el APK en el Note 8 (instalar, cámara, reverse, arranque automático)
 - [x] T013 Instalador de una línea + inicio con Windows + Release automática (falta ícono de bandeja)
 - [ ] T014 Enganchar el agente del taller: POST a /api/aviso (o ntfy + puente)

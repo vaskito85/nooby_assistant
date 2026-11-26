@@ -49,6 +49,8 @@ jobs:
           echo '{ "name": "nooby", "private": true, "type": "module" }' > paquete/package.json
           (cd paquete && zip -qr ../nooby-pc.zip .)
           cp android/app/build/outputs/apk/debug/app-debug.apk nooby.apk
+          # Versión de la app del celu: el instalador la compara y solo reinstala si cambió (así no se pierden los permisos)
+          grep -o 'versionName = "[^"]*"' android/app/build.gradle.kts | cut -d'"' -f2 > apk-version.txt
           sha256sum nooby-pc.zip nooby.apk > checksums.txt
           cat checksums.txt
 
@@ -58,4 +60,5 @@ jobs:
             nooby-pc.zip
             nooby.apk
             checksums.txt
+            apk-version.txt
           generate_release_notes: true

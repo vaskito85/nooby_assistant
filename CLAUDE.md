@@ -26,7 +26,12 @@ Web app de una pantalla (Vite + React + TS) que se muestra en un celu viejo (Gal
 - **Los ajustes se hacen en el PANEL de la PC** (`/#/panel`, `src/Panel.tsx`), no en el celu. El panel publica la config
   (JSON) en el tema `<tema>-cfg` de ntfy; el celu se suscribe con `since=latest` y la guarda en localStorage.
   El celu recibe el tema una sola vez por link (`/?tema=…`, que se borra de la barra). Ntfy retiene 12 h; el celu guarda lo último.
-- Los ojos siguen la cara detectada (y el dedo); 4 toques en 5 s sobre la cara la enojan. Pantalla completa al primer toque.
+- **Pantalla**: dos mitades fijas (apaisado: cara a la izquierda, info a la derecha; vertical: cara arriba). La cara es un cuadro de
+  proporción fija con ojos/boca en posición absoluta: ningún gesto cambia tamaños, así nada se corre. Info = estado / mensaje / botones.
+- Los ojos siguen la cara detectada (`lib/mirada.ts`, ~8 lecturas/s, suavizado por cuadro, escribe --gx/--gy) y el dedo; 4 toques en 5 s
+  sobre la cara la enojan. Cada 60 s (y cuando cambia la conexión) aparece un globito pensador con una PC y ✓ verde / ✗ roja.
+- Depurar el celu: `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>` + CDP; `window.__noobyDebug` trae ciclos, cuadros,
+  conCara, msInferencia. La app del celu solo se reinstala si cambia su versionName (si no, se pierden los permisos).
 
 ## Comandos
 ```

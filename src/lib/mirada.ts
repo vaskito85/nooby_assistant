@@ -1,0 +1,45 @@
+// Hacia dónde miran los ojos. Se mueve en cada cuadro de pantalla (suave, sin esperar a React):
+// la cámara dice dónde está la cara varias veces por segundo y los ojos van detrás con un suavizado corto.
+// Escribe dos variables CSS (--gx, --gy, de -1 a 1) que usa estilos.css para desplazar los ojos.
+
+/** La cara casi nunca llega a los bordes del cuadro: se amplifica para que el movimiento se note. */
+const GANANCIA = 2.4
+/** Qué tan rápido alcanzan el objetivo (0–1 por cuadro). */
+const SUAVIZADO = 0.28
+
+const limitar = (v: number) => Math.max(-1, Math.min(1, v))
+
+export class Mirada {
+  private tx = 0
+  private ty = 0
+  private cx = 0
+  private cy = 0
+  private raf = 0
+
+  constructor(private el: HTMLElement) {
+    const paso = () => {
+      this.cx += (this.tx - this.cx) * SUAVIZADO
+      this.cy += (this.ty - this.cy) * SUAVIZADO
+      this.el.style.setProperty('--gx', this.cx.toFixed(3))
+      this.el.style.setProperty('--gy', this.cy.toFixed(3))
+      this.raf = requestAnimationFrame(paso)
+    }
+    this.raf = requestAnimationFrame(paso)
+  }
+
+  /** x, y: posición de la cara en el cuadro, de -1 a 1 (x: derecha de la pantalla = +). */
+  apuntar(x: number, y: number) {
+    this.tx = limitar(x * GANANCIA)
+    this.ty = limitar(y * GANANCIA)
+  }
+
+  /** Sin a quién mirar: ojos al centro. */
+  descansar() {
+    this.tx = 0
+    this.ty = 0
+  }
+
+  detener() {
+    cancelAnimationFrame(this.raf)
+  }
+}
