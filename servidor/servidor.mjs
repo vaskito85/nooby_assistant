@@ -4,10 +4,11 @@
 //  - Recibe avisos (POST /api/aviso) y los reenvía al celu
 //  - Mantiene el `adb reverse` por USB para que el celu llegue a este servidor
 //  - Opcional: escucha un tema de ntfy y lo reenvía (para avisos que vienen de otra máquina, ej. la Raspberry)
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
-import { homedir } from 'node:os'
+import { homedir, networkInterfaces } from 'node:os'
 import { extname, join, normalize, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { GET as pedirCiudad } from '../api/ciudad.js'
@@ -208,15 +209,120 @@ const json = (res, codigo, obj) => {
 }
 
 const soloLocal = () => ['127.0.0.1', 'localhost', '::1'].includes(estado.servidor.escuchar)
+const DIRS_LOCALES = ['127.0.0.1', '::1', '::ffff:127.0.0.1']
 
-/** Anti DNS-rebinding: si solo escucha en esta PC, el Host tiene que ser local. */
+/** ¿El pedido viene de esta misma PC? (el navegador de la PC, o el celu por el cable USB: llega como localhost) */
+const esDeEstaPc = (req) => DIRS_LOCALES.includes(req.socket.remoteAddress ?? '')
+
+/** Anti DNS-rebinding: a lo que llega por localhost, el Host tiene que ser local. */
 function hostValido(req) {
-  if (!soloLocal()) return true
   return /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/.test(req.headers.host ?? '')
 }
 
+/** Compara el encabezado X-Token con el token guardado, en tiempo constante. */
+function tokenValido(req) {
+  const t = req.headers['x-token']
+  const real = estado.servidor.token
+  if (typeof t !== 'string' || !real || t.length !== real.length) return false
+  return timingSafeEqual(Buffer.from(t), Buffer.from(real))
+}
+
+// ---------- red: otras máquinas (ej. la Raspberry) ----------
+function infoRed() {
+  const lan = !soloLocal()
+  const direcciones = Object.values(networkInterfaces())
+    .flat()
+    .filter((i) => i && i.family === 'IPv4' && !i.internal)
+    .map((i) => i.address)
+  return { lan, puerto: PUERTO, token: lan ? estado.servidor.token : '', direcciones }
+}
+
+// ---------- informe de impresoras (lo manda el agente del taller) ----------
+const ESTADOS_IMPRESORA = ['imprimiendo', 'libre', 'pausa', 'error', 'offline', 'terminada']
+let impresoras = { ts: null, impresoras: [] }
+
+function validarImpresoras(v) {
+  if (!Array.isArray(v)) return null
+  const out = []
+  for (const p of v.slice(0, 20)) {
+    if (typeof p !== 'object' || p === null) continue
+    const nombre = typeof p.nombre === 'string' ? p.nombre.trim().slice(0, 40) : ''
+    if (!nombre || !ESTADOS_IMPRESORA.includes(p.estado)) continue
+    const item = { nombre, estado: p.estado }
+    if (typeof p.id === 'string') item.id = p.id.slice(0, 40)
+    if (typeof p.progreso === 'number' && Number.isFinite(p.progreso)) item.progreso = Math.min(100, Math.max(0, Math.round(p.progreso)))
+    if (typeof p.restanteMin === 'number' && Number.isFinite(p.restanteMin) && p.restanteMin >= 0) {
+      item.restanteMin = Math.min(100000, Math.round(p.restanteMin))
+    }
+    if (typeof p.trabajo === 'string') item.trabajo = p.trabajo.trim().slice(0, 80)
+    out.push(item)
+  }
+  return out
+}
+
+// ---------- actividad de la PC (teclado y mouse) ----------
+// Si estás usando la PC estás sentado, aunque no mires la cámara del celu. Solo se lee "hace cuánto fue la última
+// tecla o movimiento" (GetLastInputInfo): no se registra qué se escribe ni dónde se hace clic.
+let actividadPc = null // { idleMs, en }
+let procesoActividad = null
+const GUION_ACTIVIDAD = [
+  'Add-Type -TypeDefinition @"',
+  'using System;',
+  'using System.Runtime.InteropServices;',
+  'public static class NoobyIdle {',
+  '  [StructLayout(LayoutKind.Sequential)] struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }',
+  '  [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO p);',
+  '  public static uint Ms() { LASTINPUTINFO i = new LASTINPUTINFO(); i.cbSize = (uint)Marshal.SizeOf(i); GetLastInputInfo(ref i); return (uint)Environment.TickCount - i.dwTime; }',
+  '}',
+  '"@',
+  'while ($true) { [NoobyIdle]::Ms(); Start-Sleep -Seconds 5 }',
+].join('\n')
+
+function vigilarActividadPc() {
+  if (process.platform !== 'win32') return
+  procesoActividad = spawn(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', Buffer.from(GUION_ACTIVIDAD, 'utf16le').toString('base64')],
+    { windowsHide: true },
+  )
+  let resto = ''
+  procesoActividad.stdout.on('data', (d) => {
+    resto += d.toString('utf8')
+    const lineas = resto.split(/\r?\n/)
+    resto = lineas.pop() ?? ''
+    for (const l of lineas) {
+      const n = Number(l.trim())
+      if (l.trim() && Number.isFinite(n)) {
+        actividadPc = { idleMs: n, en: Date.now() }
+        emitir('actividad', { idleMs: n })
+      }
+    }
+  })
+  procesoActividad.on('error', (e) => console.log('[actividad] no pude leer la actividad de la PC:', e.message))
+  procesoActividad.on('exit', () => {
+    procesoActividad = null
+    setTimeout(vigilarActividadPc, 10_000)
+  })
+}
+process.on('exit', () => {
+  try {
+    procesoActividad?.kill()
+  } catch {
+    /* ya terminó */
+  }
+})
+
 async function manejar(req, res) {
-  if (!hostValido(req)) return json(res, 403, { error: 'host no permitido' })
+  if (esDeEstaPc(req)) {
+    if (!hostValido(req)) return json(res, 403, { error: 'host no permitido' })
+  } else {
+    // Otra máquina de la red (ej. la Raspberry): solo puede mandar avisos e informes de impresoras, y con token.
+    const ruta0 = new URL(req.url ?? '/', 'http://local').pathname
+    if (req.method !== 'POST' || (ruta0 !== '/api/aviso' && ruta0 !== '/api/impresoras')) {
+      return json(res, 403, { error: 'desde la red solo se aceptan POST /api/aviso y POST /api/impresoras' })
+    }
+    if (!tokenValido(req)) return json(res, 401, { error: 'falta el encabezado X-Token o no coincide' })
+  }
   const url = new URL(req.url ?? '/', 'http://local')
   const ruta = url.pathname
 
@@ -227,6 +333,8 @@ async function manejar(req, res) {
       puerto: PUERTO,
       celus: [...dispositivos.keys()],
       pantallas: clientes.size,
+      actividadPcMs: actividadPc ? actividadPc.idleMs : null,
+      impresorasTs: impresoras.ts,
     })
   }
 
@@ -254,6 +362,7 @@ async function manejar(req, res) {
       'x-accel-buffering': 'no',
     })
     res.write(`retry: 3000\nevent: config\ndata: ${JSON.stringify(estado.config)}\n\n`)
+    if (actividadPc) res.write(`event: actividad\ndata: ${JSON.stringify({ idleMs: actividadPc.idleMs })}\n\n`)
     clientes.add(res)
     const latido = setInterval(() => res.write(': ♥\n\n'), 20_000)
     req.on('close', () => {
@@ -265,9 +374,6 @@ async function manejar(req, res) {
 
   if (ruta === '/api/aviso' && req.method === 'POST') {
     if (!String(req.headers['content-type']).includes('application/json')) return json(res, 415, { error: 'usá application/json: {"texto":"..."}' })
-    if (!soloLocal() && estado.servidor.token && req.headers['x-token'] !== estado.servidor.token) {
-      return json(res, 401, { error: 'falta X-Token' })
-    }
     try {
       const { texto } = JSON.parse(await leerCuerpo(req))
       if (typeof texto !== 'string' || !texto.trim()) return json(res, 400, { error: 'falta texto' })
@@ -287,6 +393,43 @@ async function manejar(req, res) {
       return json(res, 200, { ok: true, pantallas: clientes.size })
     } catch {
       return json(res, 400, { error: 'JSON inválido' })
+    }
+  }
+
+  if (ruta === '/api/red') {
+    if (req.method === 'GET') return json(res, 200, infoRed())
+    if (req.method === 'PUT') {
+      if (!String(req.headers['content-type']).includes('application/json')) return json(res, 415, { error: 'usá application/json' })
+      try {
+        const c = JSON.parse(await leerCuerpo(req))
+        const antes = estado.servidor.escuchar
+        if (typeof c.lan === 'boolean') estado.servidor.escuchar = c.lan ? '0.0.0.0' : '127.0.0.1'
+        if ((!soloLocal() && !estado.servidor.token) || c.regenerarToken === true) {
+          estado.servidor.token = randomBytes(24).toString('base64url')
+        }
+        guardar()
+        json(res, 200, infoRed())
+        if (estado.servidor.escuchar !== antes) setTimeout(reiniciarEscucha, 150)
+        return
+      } catch {
+        return json(res, 400, { error: 'JSON inválido' })
+      }
+    }
+  }
+
+  if (ruta === '/api/impresoras') {
+    if (req.method === 'GET') return json(res, 200, impresoras)
+    if (req.method === 'POST') {
+      if (!String(req.headers['content-type']).includes('application/json')) return json(res, 415, { error: 'usá application/json' })
+      try {
+        const lista = validarImpresoras(JSON.parse(await leerCuerpo(req, 32768)).impresoras)
+        if (!lista) return json(res, 400, { error: 'falta "impresoras": [...]' })
+        impresoras = { ts: Date.now(), impresoras: lista }
+        emitir('impresoras', impresoras)
+        return json(res, 200, { ok: true, recibidas: lista.length })
+      } catch {
+        return json(res, 400, { error: 'JSON inválido' })
+      }
     }
   }
 
@@ -330,10 +473,26 @@ servidorHttp.on('error', (e) => {
   process.exit(1)
 })
 
-servidorHttp.listen(PUERTO, estado.servidor.escuchar, () => {
-  console.log(`Nooby ${VERSION} en http://127.0.0.1:${PUERTO}  (panel: /#/panel)`)
-  console.log(`Config: ${ARCHIVO}`)
-  void cicloAdb()
-  setInterval(() => void cicloAdb(), 4000)
-  void puenteNtfy()
-})
+let tareasIniciadas = false
+function escuchar() {
+  servidorHttp.listen(PUERTO, estado.servidor.escuchar, () => {
+    const lan = !soloLocal()
+    console.log(`Nooby ${VERSION} en http://127.0.0.1:${PUERTO}  (panel: /#/panel)${lan ? '  [acceso desde la red ACTIVADO, con token]' : ''}`)
+    console.log(`Config: ${ARCHIVO}`)
+    if (tareasIniciadas) return
+    tareasIniciadas = true
+    void cicloAdb()
+    setInterval(() => void cicloAdb(), 4000)
+    void puenteNtfy()
+    vigilarActividadPc()
+  })
+}
+
+/** Cambia entre "solo esta PC" y "también la red" sin matar el proceso. */
+function reiniciarEscucha() {
+  console.log(`[red] cambiando la escucha a ${estado.servidor.escuchar}`)
+  servidorHttp.close(() => escuchar())
+  servidorHttp.closeAllConnections?.() // el celu y el panel se reconectan solos
+}
+
+escuchar()

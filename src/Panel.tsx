@@ -3,13 +3,18 @@ import { BuscadorCiudad } from './BuscadorCiudad'
 import {
   avisoLocal,
   entrenarLocal,
+  guardarRed,
+  leerImpresoras,
+  leerRed,
   estadoLocal,
   guardarConfigLocal,
   leerConfigLocal,
   type EstadoServidor,
+  type Red,
 } from './lib/canalLocal'
 import type { Ciudad } from './lib/clima'
 import { aRemota, aplicarRemota, cargarPanel, guardarPanel, limpiarLlamadas, porDefecto, temaConfig, type Ajustes } from './lib/config'
+import { describirImpresoras, type InformeImpresoras } from './lib/impresoras'
 import { enviarNtfy } from './lib/ntfy'
 
 function temaNuevo() {
@@ -34,6 +39,9 @@ export function Panel() {
   })
   const [estado, setEstado] = useState('')
   const [copiado, setCopiado] = useState(false)
+  const [red, setRed] = useState<Red | null>(null)
+  const [informe, setInforme] = useState<InformeImpresoras>({ ts: null, impresoras: [] })
+  const [copiadoToken, setCopiadoToken] = useState(false)
 
   // Detecta el modo y, si es local, trae la config guardada en la PC.
   useEffect(() => {
@@ -48,6 +56,11 @@ export function Panel() {
         try {
           const cfg = (await leerConfigLocal()) as { llamadas?: unknown }
           if (vivo) setA((prev) => ({ ...prev, llamadas: limpiarLlamadas(cfg.llamadas) }))
+          const [r, i] = await Promise.all([leerRed(), leerImpresoras()])
+          if (vivo) {
+            setRed(r)
+            setInforme(i)
+          }
         } catch {
           /* se reintenta en 3 s */
         }
@@ -124,6 +137,21 @@ export function Panel() {
     } catch (e) {
       setEstado(`No pude guardar: ${e instanceof Error ? e.message : 'error'}`)
     }
+  }
+
+  const cambiarRed = async (cambio: { lan?: boolean; regenerarToken?: boolean }) => {
+    try {
+      setRed(await guardarRed(cambio))
+    } catch (e) {
+      setEstado(`No pude cambiar la red: ${e instanceof Error ? e.message : 'error'}`)
+    }
+  }
+
+  const copiarToken = async () => {
+    if (!red?.token) return
+    await navigator.clipboard.writeText(red.token)
+    setCopiadoToken(true)
+    window.setTimeout(() => setCopiadoToken(false), 2000)
   }
 
   const link =
@@ -251,6 +279,51 @@ export function Panel() {
           </>
         ) : (
           <p className="chico">El entrenamiento necesita el modo USB (el servidor de la PC con el celu enchufado).</p>
+        )}
+      </section>
+
+      <section className="ajustes">
+        <h2>4. Conectar la Raspberry y otras máquinas</h2>
+        {modo === 'local' ? (
+          <>
+            <p className="chico">
+              Para que el agente de las impresoras (en otra máquina) le hable a Nooby hay que abrir el acceso por la red local.
+              Solo acepta avisos e informes de impresoras, y siempre con el token. Todo lo demás (este panel, tus ajustes) sigue
+              cerrado a la red.
+            </p>
+            <button className="boton" onClick={() => void cambiarRed({ lan: !red?.lan })}>
+              {red?.lan ? 'Cerrar el acceso desde la red' : 'Abrir el acceso desde la red'}
+            </button>
+            {red?.lan && (
+              <>
+                <p>
+                  Dirección: <code>http://{red.direcciones[0] ?? 'IP-DE-ESTA-PC'}:{red.puerto}</code>
+                </p>
+                <label>
+                  Token (encabezado <code>X-Token</code>)
+                  <input readOnly value={red.token} onFocus={(e) => e.currentTarget.select()} />
+                </label>
+                <button className="boton" onClick={() => void copiarToken()}>
+                  {copiadoToken ? 'Copiado ✓' : 'Copiar token'}
+                </button>
+                <button className="boton" onClick={() => void cambiarRed({ regenerarToken: true })}>
+                  Generar token nuevo (hay que cargarlo de nuevo en el otro agente)
+                </button>
+                <p className="chico">
+                  Si la PC cambia de IP, la dirección cambia: conviene fijarla en el router. Las instrucciones para el otro agente
+                  están en <code>docs/integracion-agente.md</code>.
+                </p>
+              </>
+            )}
+            <p className="chico">
+              Impresoras:{' '}
+              {informe.ts == null
+                ? 'todavía no llegó ningún informe.'
+                : `último informe hace ${Math.max(0, Math.round((Date.now() - informe.ts) / 1000))} s. ${describirImpresoras(informe, Date.now())}`}
+            </p>
+          </>
+        ) : (
+          <p className="chico">Necesita el modo USB (el servidor de la PC con el celu enchufado).</p>
         )}
       </section>
 

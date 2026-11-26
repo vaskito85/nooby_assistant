@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react'
 import { Cara, type Humor } from './Cara'
 import { Pensamiento } from './Pensamiento'
+import { pcActivo, type ActividadPc } from './lib/actividad'
+import { describirImpresoras } from './lib/impresoras'
 import { comentarioPorMovimiento, FRASE_HOLA_DE_NUEVO, FRASE_YA_TE_VAS } from './lib/comentarios'
 import { Mirada } from './lib/mirada'
 import { detectarLlamado, interpretar, type Orden } from './lib/voz'
 import { callar, desbloquear, hablar, sonar, type Sonido } from './lib/audio'
 import { frase, pedirClima } from './lib/clima'
 import { aplicarRemota, cargarAjustes, guardarAjustes, limpiarLlamadas, temaConfig, type Ajustes } from './lib/config'
-import { conectarLocal, estadoLocal, guardarConfigLocal } from './lib/canalLocal'
+import { conectarLocal, estadoLocal, guardarConfigLocal, leerImpresoras } from './lib/canalLocal'
 import { conectarNtfy } from './lib/ntfy'
 import { Presencia } from './lib/presencia'
 import { Sentado } from './lib/sentado'
@@ -97,6 +99,7 @@ export function App() {
   const entrenandoRef = useRef(entrenando)
   entrenandoRef.current = entrenando
   const timerEntrenar = useRef<number | null>(null)
+  const actividadPcRef = useRef<ActividadPc | null>(null)
   const iniciarEntrenamientoRef = useRef<(frase: string) => void>(() => {})
   const mirada = useRef<Mirada | null>(null)
   const dedoActivo = useRef(false)
@@ -213,7 +216,7 @@ export function App() {
   // Mira la cámara ~8 veces por segundo: presencia, contadores y hacia dónde miran los ojos.
   useEffect(() => {
     if (fase !== 'activo' || !conCamara) return
-    const dbg = (window.__noobyDebug = { ciclos: 0, cuadros: 0, conCara: 0, msInferencia: 0, ultimaCara: 0 })
+    const dbg = (window.__noobyDebug = { ciclos: 0, cuadros: 0, conCara: 0, msInferencia: 0, ultimaCara: 0, pcActiva: 0, idlePcMs: -1 })
     let proximaLectura = 0
     const id = window.setInterval(() => {
       const ahora = Date.now()
@@ -238,7 +241,11 @@ export function App() {
           else mirada.current?.descansar()
         }
       }
-      const visible = visibleAntes.current
+      // Estás si te ve la cámara O si estás usando la PC (teclado/mouse): sentado frente a la compu no mirás el celu.
+      const pcUsandose = pcActivo(actividadPcRef.current, ahora)
+      dbg.pcActiva = pcUsandose ? 1 : 0 // para diagnosticar desde chrome://inspect
+      dbg.idlePcMs = actividadPcRef.current?.idleMs ?? -1
+      const visible = visibleAntes.current || pcUsandose
       const vistaAnterior = ultimaVista.current // la última vez que te vio ANTES de este cuadro
       if (visible) ultimaVista.current = ahora
       const s = sentado.current.tick(ahora, visible)
@@ -337,6 +344,9 @@ export function App() {
       },
       estadoEnlace,
       (frase) => iniciarEntrenamientoRef.current(frase),
+      (idleMs) => {
+        actividadPcRef.current = { idleMs, en: Date.now() }
+      },
     )
   }, [modo, lanzarAviso])
 
@@ -438,11 +448,16 @@ export function App() {
         agua.current.descansar()
         responder(`Muy bien, ${nombre}. Hay que tomar agua.`)
         break
+      case 'impresoras':
+        void leerImpresoras()
+          .then((d) => responder(describirImpresoras(d, Date.now())))
+          .catch(() => responder('No pude consultar las impresoras.'))
+        break
       case 'chau':
         responder('De nada.')
         break
       case 'ayuda':
-        responder('Podés pedirme el clima, la hora, cuánto llevás sentado, o decirme que ya te levantaste o tomaste agua.')
+        responder('Podés pedirme el clima, la hora, cómo van las impresoras, cuánto llevás sentado, o decirme que ya te levantaste o tomaste agua.')
         break
     }
   }

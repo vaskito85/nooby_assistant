@@ -74,13 +74,14 @@ export function detectarLlamado(
   return { llamado: false, resto: '' }
 }
 
-export type Orden = 'tiempoSentado' | 'clima' | 'hora' | 'levante' | 'agua' | 'chau' | 'ayuda'
+export type Orden = 'tiempoSentado' | 'impresoras' | 'clima' | 'hora' | 'levante' | 'agua' | 'chau' | 'ayuda'
 
 /** Qué te pidió. null = no se entendió. El orden importa: "cuánto tiempo llevo sentado" no es el clima. */
 export function interpretar(texto: string): Orden | null {
   const t = normalizar(texto)
   if (!t) return null
   if (/(cuanto|hace cuanto|cuantos minutos).*(sentad|llevo)|\bsentad/.test(t)) return 'tiempoSentado'
+  if (/\bimpresora|\bimpresion|\bimprimiendo|\bcuanto falta\b/.test(t)) return 'impresoras'
   if (/\b(clima|temperatura|llover|lluvia|llueve|llovera|frio|calor|pronostico)\b|\bel tiempo\b/.test(t)) return 'clima'
   if (/\bque hora\b|\bla hora\b|\bhora es\b/.test(t)) return 'hora'
   if (/\blevant|\bdescans|\bparado\b/.test(t)) return 'levante'

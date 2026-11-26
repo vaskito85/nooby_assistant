@@ -28,6 +28,8 @@ export function conectarLocal(
   alEstado: (conectado: boolean) => void,
   /** El panel de la PC pidió entrenar la frase de despertar. */
   alEntrenar?: (frase: string) => void,
+  /** La PC informa hace cuánto fue la última tecla o movimiento del mouse (ms). */
+  alActividad?: (idleMs: number) => void,
 ): () => void {
   const es = new EventSource('/api/eventos')
   es.onopen = () => alEstado(true)
@@ -36,6 +38,14 @@ export function conectarLocal(
     try {
       const { texto } = JSON.parse((e as MessageEvent).data)
       if (typeof texto === 'string') alAviso(texto)
+    } catch {
+      /* se ignora */
+    }
+  })
+  es.addEventListener('actividad', (e) => {
+    try {
+      const { idleMs } = JSON.parse((e as MessageEvent).data)
+      if (typeof idleMs === 'number') alActividad?.(idleMs)
     } catch {
       /* se ignora */
     }
@@ -91,4 +101,36 @@ export async function entrenarLocal(frase: string) {
   })
   if (!r.ok) throw new Error(`el servidor respondió ${r.status}`)
   return (await r.json()) as { ok: boolean; pantallas: number }
+}
+
+export interface Red {
+  /** ¿Acepta avisos desde otras máquinas de la red (con token)? */
+  lan: boolean
+  puerto: number
+  /** Solo viene cuando el acceso por red está activado. */
+  token: string
+  direcciones: string[]
+}
+
+export async function leerRed(): Promise<Red> {
+  const r = await fetch('/api/red', { cache: 'no-store' })
+  if (!r.ok) throw new Error(`red ${r.status}`)
+  return r.json()
+}
+
+/** Abre o cierra el acceso desde la red, o genera un token nuevo. */
+export async function guardarRed(cambio: { lan?: boolean; regenerarToken?: boolean }): Promise<Red> {
+  const r = await fetch('/api/red', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(cambio),
+  })
+  if (!r.ok) throw new Error(`el servidor respondió ${r.status}`)
+  return r.json()
+}
+
+export async function leerImpresoras(): Promise<import('./impresoras').InformeImpresoras> {
+  const r = await fetch('/api/impresoras', { cache: 'no-store' })
+  if (!r.ok) throw new Error(`impresoras ${r.status}`)
+  return r.json()
 }

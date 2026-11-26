@@ -26,7 +26,12 @@
 ## Hecho (v0.4.0)
 - [x] Entrenar la frase de despertar con la voz del usuario (panel + celu + gramática dinámica en el APK)
 
+## Hecho (v0.4.1)
+- [x] Presencia por actividad de la PC (fin de los falsos "¿ya te vas?")
+- [x] Acceso desde la red con token + informe de impresoras + comando de voz
+
 ## Pendiente
+- [ ] T018 El agente del taller (suite_impresion_3D) tiene que implementar docs/integracion-agente.md
 - [ ] T016 Probar el oído en el celu: ajustar cómo entiende "che nooby" (ver window.__noobyDebug.oido)
 - [ ] T017 Etapa 2: preguntas libres con una IA (evaluar plan gratis; clave en el servidor de la PC)
 - [ ] T015 Verificar en el celu que el detector ve la cara (window.__noobyDebug) y ajustar ganancia de los ojos

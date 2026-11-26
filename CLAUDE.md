@@ -44,6 +44,12 @@ Web app de una pantalla (Vite + React + TS) que se muestra en un celu viejo (Gal
   el servidor emite el evento SSE `entrenar`, el celu pide repetir la frase 5 veces (modo libre), anota lo que entiende el reconocedor
   (p. ej. "china vi") y lo guarda como `llamadas` en la config. Esas frases pasan a ser la gramática del modo llamado
   (`NoobyNativo.modoOido(modo, gramaticaJson)`, APK >= 0.4.0, `apiVersion() >= 2`). Se suman entre entrenamientos; el panel las quita.
+- **Presencia = cara O usando la PC** (`lib/actividad.ts`): el servidor lee el tiempo desde la última tecla/mouse de Windows
+  (GetLastInputInfo vía un PowerShell residente, solo ese número) y lo manda por SSE (`actividad`). Si es menor a 90 s cuenta como sentado
+  aunque la cámara no vea la cara (celu al costado). `__noobyDebug.pcActiva` / `idlePcMs` para diagnosticar.
+- **Acceso desde otras máquinas** (Raspberry/agente de impresoras): panel > sección 4 abre `escuchar: 0.0.0.0` + token. Desde la red SOLO se acepta
+  `POST /api/aviso` y `POST /api/impresoras` con `X-Token`; el resto da 403. Lo que llega por localhost (panel, celu por USB) no pide token pero valida
+  el Host (anti DNS-rebinding). Contrato completo para el otro agente: `docs/integracion-agente.md`. Voz: "¿cómo van las impresoras?" lee el último informe.
 - La cámara se auto-frena: si una lectura tarda mucho (celu cargado), espera el doble antes de la siguiente (`msInferencia` en __noobyDebug).
 - Depurar el celu: `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>` + CDP; `window.__noobyDebug` trae ciclos, cuadros,
   conCara, msInferencia. La app del celu solo se reinstala si cambia su versionName (si no, se pierden los permisos).
