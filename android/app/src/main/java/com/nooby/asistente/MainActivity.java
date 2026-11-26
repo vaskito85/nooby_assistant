@@ -7,6 +7,7 @@ import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.view.View;
 import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
@@ -40,9 +41,13 @@ public class MainActivity extends Activity {
     private boolean pidiendoCamara = false;
 
     // Voz
+    private static final String MOTOR_GOOGLE = "com.google.android.tts";
     private TextToSpeech tts;
     private boolean ttsListo = false;
     private String textoPendiente = null;
+    private String ultimoTexto = null;
+    private String motorActual = null; // null = el motor por defecto del celu (en Samsung, "Samsung TTS")
+    private boolean probadoGoogle = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -50,7 +55,7 @@ public class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.parseColor("#070B16")));
 
-        iniciarVoz();
+        iniciarVoz(null);
 
         web = new WebView(this);
         web.setBackgroundColor(Color.parseColor("#070B16"));
@@ -126,9 +131,18 @@ public class MainActivity extends Activity {
     }
 
     // ---------- voz ----------
-    private void iniciarVoz() {
-        tts = new TextToSpeech(this, status -> {
-            if (status != TextToSpeech.SUCCESS) return;
+    private void iniciarVoz(final String paquete) {
+        motorActual = paquete;
+        ttsListo = false;
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
+        }
+        TextToSpeech.OnInitListener alIniciar = status -> {
+            if (status != TextToSpeech.SUCCESS) {
+                runOnUiThread(this::fallaVoz);
+                return;
+            }
             int r = tts.setLanguage(new Locale("es", "AR"));
             if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
                 r = tts.setLanguage(new Locale("es", "ES"));
@@ -136,12 +150,43 @@ public class MainActivity extends Activity {
             if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
                 tts.setLanguage(new Locale("es"));
             }
+            // Algunos motores (Samsung) dicen "idioma disponible" aunque no tengan la voz descargada y fallan
+            // recién al sintetizar: por eso se escucha el error y se pasa a otro motor.
+            tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                @Override public void onStart(String id) { }
+                @Override public void onDone(String id) { }
+                @Override public void onError(String id) { runOnUiThread(MainActivity.this::fallaVoz); }
+                @Override public void onError(String id, int code) { runOnUiThread(MainActivity.this::fallaVoz); }
+            });
             ttsListo = true;
             if (textoPendiente != null) {
                 tts.speak(textoPendiente, TextToSpeech.QUEUE_FLUSH, null, "nooby");
                 textoPendiente = null;
             }
-        });
+        };
+        tts = (paquete == null)
+                ? new TextToSpeech(this, alIniciar)
+                : new TextToSpeech(this, alIniciar, paquete);
+    }
+
+    private boolean instalado(String paquete) {
+        try {
+            getPackageManager().getPackageInfo(paquete, 0);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** El motor actual no pudo hablar: se prueba Google TTS una vez; si tampoco, se avisa a la web. */
+    private void fallaVoz() {
+        if (motorActual == null && !probadoGoogle && instalado(MOTOR_GOOGLE)) {
+            probadoGoogle = true;
+            textoPendiente = ultimoTexto;
+            iniciarVoz(MOTOR_GOOGLE);
+            return;
+        }
+        web.evaluateJavascript("window.dispatchEvent(new Event('nooby-voz-error'))", null);
     }
 
     /** Lo que la web puede llamar como window.NoobyNativo.hablar("...") */
@@ -149,6 +194,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void hablar(final String texto) {
             runOnUiThread(() -> {
+                ultimoTexto = texto;
                 if (ttsListo && tts != null) {
                     tts.speak(texto, TextToSpeech.QUEUE_FLUSH, null, "nooby");
                 } else {

@@ -10,8 +10,8 @@ android {
         applicationId = "com.nooby.asistente"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.2.2"
     }
 
     buildTypes {

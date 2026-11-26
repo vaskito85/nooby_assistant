@@ -145,6 +145,16 @@ export function App() {
     }
   }
 
+  // El APK avisa si ningún motor de voz del celu pudo hablar en español.
+  useEffect(() => {
+    const sinVoz = () =>
+      setNota(
+        'No tengo voz en español. En el celu: Ajustes > Administración general > Idioma > Texto a voz, y descargá el español.',
+      )
+    window.addEventListener('nooby-voz-error', sinVoz)
+    return () => window.removeEventListener('nooby-voz-error', sinVoz)
+  }, [])
+
   // El navegador suelta la pantalla encendida al ocultarse la página: se vuelve a pedir.
   useEffect(() => {
     if (fase !== 'activo') return
