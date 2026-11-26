@@ -40,7 +40,12 @@ export function sonar(tipo: Sonido) {
 /** Puente que expone el APK: el WebView de Android no trae voz propia, así que usa el TextToSpeech del sistema. */
 declare global {
   interface Window {
-    NoobyNativo?: { hablar(texto: string): void; callar(): void }
+    NoobyNativo?: {
+      hablar(texto: string): void
+      callar(): void
+      /** "llamado" = solo espera "che nooby"; "libre" = entiende lo que se le pide. (APK 0.3.2 o más nuevo) */
+      modoOido?(modo: 'llamado' | 'libre'): void
+    }
   }
 }
 

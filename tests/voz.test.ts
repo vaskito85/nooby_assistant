@@ -65,3 +65,20 @@ describe('interpretar', () => {
     expect(interpretar('')).toBeNull()
   })
 })
+
+describe('detectarLlamado con gramática cerrada (APK)', () => {
+  it('"nube" sola despierta (lo más parecido a "nooby" que conoce el modelo)', () => {
+    expect(detectarLlamado('nube', { gramatica: true }).llamado).toBe(true)
+    expect(detectarLlamado('nubes', { gramatica: true }).llamado).toBe(true)
+    expect(detectarLlamado('che nube', { gramatica: true }).llamado).toBe(true)
+  })
+  it('sin gramática, "nube" sola no despierta', () => {
+    expect(detectarLlamado('nube').llamado).toBe(false)
+    expect(detectarLlamado('hay una nube').llamado).toBe(false)
+  })
+  it('"che" sola o [unk] no despierta', () => {
+    expect(detectarLlamado('che', { gramatica: true }).llamado).toBe(false)
+    expect(detectarLlamado('[unk]', { gramatica: true }).llamado).toBe(false)
+    expect(detectarLlamado('', { gramatica: true }).llamado).toBe(false)
+  })
+})

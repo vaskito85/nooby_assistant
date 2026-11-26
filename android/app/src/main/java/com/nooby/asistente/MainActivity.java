@@ -65,9 +65,17 @@ public class MainActivity extends Activity {
     private String motorActual = null; // null = el motor por defecto del celu (en Samsung, "Samsung TTS")
     private boolean probadoGoogle = false;
 
-    // Oído (escuchar)
+    // Oído (escuchar). Dos modos:
+    //  - "llamado": solo puede oír "che nube / nuevo…" (gramática cerrada): barato y casi sin falsos positivos.
+    //    El modelo no conoce "nooby", así que se le ofrecen palabras comunes que suenan parecido.
+    //  - "libre": vocabulario completo, para entender lo que se le pide después de despertarlo.
+    private static final String GRAMATICA_LLAMADO =
+            "[\"che nube\", \"che nubes\", \"che nuevo\", \"nube\", \"nubes\", \"[unk]\"]";
     private Model modelo;
     private SpeechService servicioVoz;
+    private Recognizer recActual;
+    private String modoOido = "llamado";
+    private boolean oidoPausado = false;
     private boolean iniciandoOido = false;
     private final Runnable reanudarOido = () -> pausarOido(false);
 
@@ -186,7 +194,10 @@ public class MainActivity extends Activity {
 
     private void arrancarReconocedor() {
         try {
-            Recognizer rec = new Recognizer(modelo, FRECUENCIA);
+            Recognizer rec = "llamado".equals(modoOido)
+                    ? new Recognizer(modelo, FRECUENCIA, GRAMATICA_LLAMADO)
+                    : new Recognizer(modelo, FRECUENCIA);
+            recActual = rec;
             servicioVoz = new SpeechService(rec, FRECUENCIA);
             servicioVoz.startListening(new RecognitionListener() {
                 @Override public void onPartialResult(String h) { enviarOido(h); }
@@ -195,7 +206,8 @@ public class MainActivity extends Activity {
                 @Override public void onError(Exception e) { avisarJs("nooby-oido-error", "Reconocedor: " + e.getMessage()); }
                 @Override public void onTimeout() { }
             });
-            avisarJs("nooby-oido-listo", "ok");
+            servicioVoz.setPause(oidoPausado); // si justo estaba hablando, el nuevo reconocedor arranca en pausa
+            avisarJs("nooby-oido-listo", modoOido);
         } catch (IOException e) {
             avisarJs("nooby-oido-error", "No pude iniciar el reconocedor: " + e.getMessage());
         }
@@ -203,7 +215,24 @@ public class MainActivity extends Activity {
 
     /** Mientras Nooby habla se deja de escuchar (si no, se oiría a sí mismo). */
     private void pausarOido(boolean pausa) {
+        oidoPausado = pausa;
         if (servicioVoz != null) servicioVoz.setPause(pausa);
+    }
+
+    /** Cambia entre esperar "che nooby" ("llamado") y entender lo que se pide ("libre"). */
+    private void cambiarModoOido(String modo) {
+        if (!"llamado".equals(modo) && !"libre".equals(modo)) return;
+        if (modo.equals(modoOido)) return;
+        modoOido = modo;
+        if (modelo == null || servicioVoz == null) return; // todavía no arrancó: arrancará ya en este modo
+        servicioVoz.stop();
+        servicioVoz.shutdown();
+        servicioVoz = null;
+        final Recognizer vieja = recActual;
+        recActual = null;
+        // Se cierra con un pequeño retraso: así ningún evento pendiente del servicio viejo toca un reconocedor ya cerrado.
+        if (vieja != null) ui.postDelayed(vieja::close, 700);
+        arrancarReconocedor();
     }
 
     /** Pasa a la web lo que se oyó: {"text": "..."} (frase terminada) o {"partial": "..."} (en curso). */
@@ -313,6 +342,11 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void modoOido(final String modo) {
+            runOnUiThread(() -> cambiarModoOido(modo));
+        }
+
+        @JavascriptInterface
         public void callar() {
             runOnUiThread(() -> {
                 textoPendiente = null;
@@ -363,6 +397,7 @@ public class MainActivity extends Activity {
             servicioVoz.stop();
             servicioVoz.shutdown();
         }
+        if (recActual != null) recActual.close();
         if (modelo != null) modelo.close();
         if (tts != null) {
             tts.stop();

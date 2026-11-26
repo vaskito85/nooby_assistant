@@ -38,12 +38,17 @@ export interface Llamado {
   resto: string
 }
 
-/** ¿Dijo "che nooby" (o parecido)? Solo se acepta una palabra suelta si es casi exacta, para no despertar con "nube". */
-export function detectarLlamado(texto: string): Llamado {
+/**
+ * ¿Dijo "che nooby" (o parecido)? Solo se acepta una palabra suelta si es casi exacta, para no despertar con "nube".
+ *
+ * Con `gramatica` (el APK escuchando con la gramática cerrada "che nube / nuevo…") el reconocedor ya filtró todo lo demás,
+ * así que "nube" o "nubes" solas también cuentan: es lo más parecido a "nooby" que conoce el modelo.
+ */
+export function detectarLlamado(texto: string, opciones: { gramatica?: boolean } = {}): Llamado {
   const t = normalizar(texto).split(' ').filter(Boolean)
   for (let i = 0; i < t.length; i++) {
     const w = t[i]
-    const exacta = SUENA_COMO_NOOBY.includes(w)
+    const exacta = SUENA_COMO_NOOBY.includes(w) || (opciones.gramatica === true && (w === 'nube' || w === 'nubes'))
     const tras = i > 0 && LLAMADORES.includes(t[i - 1])
     const parecida =
       tras && (SUENA_COMO_NOOBY.some((o) => distancia(w, o) <= 1) || PARECIDAS_TRAS_CHE.includes(w))

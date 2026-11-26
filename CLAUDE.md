@@ -33,11 +33,14 @@ Web app de una pantalla (Vite + React + TS) que se muestra en un celu viejo (Gal
 - **Oído (v0.3)**: el APK escucha con Vosk (offline, español; el modelo va en assets/model-es y lo baja el CI) y solo pasa TEXTO a la
   web (evento `nooby-oyo`, {text|partial}). Toda la lógica vive en la web (`lib/voz.ts`, con tests): "che nooby" (escrito como suena:
   nubi/nuvi/nuby…), "Sí, <nombre>", y comandos fijos (clima, hora, cuánto llevo sentado, ya me levanté, agua, gracias, ayuda).
-  Mientras habla el TTS el micrófono se pausa (si no se oiría a sí mismo). `window.__noobyDebug.oido` guarda lo último que entendió.
+  Dos modos (`NoobyNativo.modoOido`): **llamado** = gramática cerrada ["che nube","che nuevo","nube",…] (el modelo no conoce "nooby", así que
+  se le ofrecen palabras comunes parecidas; barato y casi sin falsos positivos) y **libre** = vocabulario completo, que se usa mientras está
+  "atento" para entender los pedidos. La web cambia de modo según su estado. Mientras habla el TTS el micrófono se pausa (si no se oiría a sí mismo). `window.__noobyDebug.oido` guarda lo último que entendió.
   Etapa 2 pendiente: preguntas libres con una IA (la clave quedaría en el servidor de la PC, nunca en el celu).
 - Comentarios (`lib/comentarios.ts`, con tests): al irte tras 30 s–5 min sentado dice "¿Ya te vas? Trabajaste poco." (máx. 1 cada 10 min);
   al volver tras 2 min o más dice "¡Hola de nuevo! ¿Cómo estuvo el recreo? ¿Qué hacemos ahora?". No pisan una alarma de impresión.
 - Sonidos: solo la alarma de la impresión suena como alarma; clima/recordatorios/enojo no tienen "ding" (el enojo solo habla).
+- La cámara se auto-frena: si una lectura tarda mucho (celu cargado), espera el doble antes de la siguiente (`msInferencia` en __noobyDebug).
 - Depurar el celu: `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>` + CDP; `window.__noobyDebug` trae ciclos, cuadros,
   conCara, msInferencia. La app del celu solo se reinstala si cambia su versionName (si no, se pierden los permisos).
 

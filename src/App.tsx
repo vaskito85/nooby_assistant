@@ -204,14 +204,19 @@ export function App() {
   useEffect(() => {
     if (fase !== 'activo' || !conCamara) return
     const dbg = (window.__noobyDebug = { ciclos: 0, cuadros: 0, conCara: 0, msInferencia: 0, ultimaCara: 0 })
+    let proximaLectura = 0
     const id = window.setInterval(() => {
       const ahora = Date.now()
+      // Si el celu va lento (cada lectura tarda mucho), se espera el doble de lo que tardó: la cámara no puede
+      // comerse todo el procesador y dejar sin aire a la pantalla y al oído.
+      if (ahora < proximaLectura) return
       const t0 = performance.now()
       const cara = presencia.current?.buscarCara()
       dbg.ciclos++
       if (cara !== undefined) {
         dbg.cuadros++
         dbg.msInferencia = Math.round(performance.now() - t0)
+        proximaLectura = ahora + Math.min(1000, dbg.msInferencia * 2)
         visibleAntes.current = cara !== null
         if (cara) {
           dbg.conCara++
@@ -467,7 +472,7 @@ export function App() {
       mantenerAtento() // mientras habla, no se duerme
     }
     if (!final) return
-    const llamado = detectarLlamado(texto)
+    const llamado = detectarLlamado(texto, { gramatica: typeof window.NoobyNativo?.modoOido === 'function' })
     if (oidoRef.current === 'listo') {
       if (!llamado.llamado) return
       if (interpretar(llamado.resto)) {
@@ -481,6 +486,11 @@ export function App() {
       else atender(llamado.llamado ? llamado.resto : texto)
     }
   }
+
+  // Esperando "che nooby" el celu escucha con gramática cerrada (barato y preciso); atento, con vocabulario libre.
+  useEffect(() => {
+    window.NoobyNativo?.modoOido?.(oido === 'atento' ? 'libre' : 'llamado')
+  }, [oido])
 
   useEffect(() => {
     const alOyo = (e: Event) => alOirRef.current((e as CustomEvent).detail)
