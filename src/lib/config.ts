@@ -24,9 +24,9 @@ export const porDefecto: Ajustes = {
   tema: '',
   sentadoMin: 60,
   aguaMin: 45,
-  ciudad: 'Buenos Aires',
-  lat: -34.6,
-  lon: -58.4,
+  ciudad: 'Bahía Blanca',
+  lat: -38.72,
+  lon: -62.27,
   voz: true,
 }
 

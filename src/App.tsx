@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Cara, type Humor } from './Cara'
 import { desbloquear, hablar, sonar, type Sonido } from './lib/audio'
-import { frase, pedirClima } from './lib/clima'
+import { BuscadorCiudad } from './BuscadorCiudad'
+import { frase, pedirClima, type Ciudad } from './lib/clima'
 import { cargarAjustes, guardarAjustes, type Ajustes } from './lib/config'
 import { conectarNtfy, enviarNtfy } from './lib/ntfy'
 import { Presencia } from './lib/presencia'
@@ -148,16 +149,23 @@ export function App() {
 
   useEffect(() => () => presencia.current?.detener(), [])
 
-  const verClima = async () => {
+  const verClima = async (lat = ajustes.lat, lon = ajustes.lon, ciudad = ajustes.ciudad) => {
     setNota('Mirando el cielo…')
     try {
-      const c = await pedirClima(ajustes.lat, ajustes.lon)
-      const f = frase(c, ajustes.ciudad)
+      const c = await pedirClima(lat, lon)
       setNota('')
-      lanzarAviso(f, 'suave', false)
-    } catch {
-      setNota('No pude traer el clima. ¿Hay internet?')
+      lanzarAviso(frase(c, ciudad), 'suave', false)
+    } catch (e) {
+      const detalle = e instanceof Error ? `${e.name}: ${e.message}` : String(e)
+      setNota(`No pude traer el clima (${detalle}).`)
     }
+  }
+
+  const elegirCiudad = (c: Ciudad) => {
+    const nuevo = { ...ajustes, ciudad: c.nombre, lat: c.lat, lon: c.lon }
+    setAjustes(nuevo)
+    guardarAjustes(nuevo)
+    void verClima(c.lat, c.lon, c.nombre) // carga el clima al toque
   }
 
   const probarAviso = async () => {
@@ -223,7 +231,7 @@ export function App() {
           </section>
 
           <nav className="botones">
-            <button className="boton" onClick={verClima}>
+            <button className="boton" onClick={() => verClima()}>
               ☁ Clima
             </button>
             <button
@@ -273,30 +281,7 @@ export function App() {
                 onChange={(e) => cambiar('aguaMin', Math.max(0, Number(e.target.value) || 0))}
               />
             </label>
-            <label>
-              Ciudad (para el clima)
-              <input value={ajustes.ciudad} onChange={(e) => cambiar('ciudad', e.target.value)} />
-            </label>
-            <div className="fila">
-              <label>
-                Lat
-                <input
-                  type="number"
-                  step="0.01"
-                  value={ajustes.lat}
-                  onChange={(e) => cambiar('lat', Number(e.target.value))}
-                />
-              </label>
-              <label>
-                Lon
-                <input
-                  type="number"
-                  step="0.01"
-                  value={ajustes.lon}
-                  onChange={(e) => cambiar('lon', Number(e.target.value))}
-                />
-              </label>
-            </div>
+            <BuscadorCiudad actual={ajustes.ciudad} alElegir={elegirCiudad} />
             <label className="check">
               <input type="checkbox" checked={ajustes.voz} onChange={(e) => cambiar('voz', e.target.checked)} />
               Hablar en voz alta

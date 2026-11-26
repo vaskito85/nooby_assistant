@@ -22,6 +22,31 @@ export function describirCodigo(c: number): string {
   return 'variable'
 }
 
+export interface Ciudad {
+  nombre: string
+  detalle: string // provincia y país
+  lat: number
+  lon: number
+}
+
+/** Busca ciudades por nombre (Open-Meteo Geocoding, sin clave). Entiende "bahia blanca" sin tilde. */
+export async function buscarCiudades(texto: string, senal?: AbortSignal): Promise<Ciudad[]> {
+  const q = texto.trim()
+  if (q.length < 3) return []
+  const url =
+    'https://geocoding-api.open-meteo.com/v1/search' +
+    `?name=${encodeURIComponent(q)}&count=6&language=es&format=json`
+  const r = await fetch(url, { signal: senal })
+  if (!r.ok) throw new Error(`buscador ${r.status}`)
+  const d = await r.json()
+  return (d.results ?? []).map((x: Record<string, unknown>) => ({
+    nombre: String(x.name),
+    detalle: [x.admin1, x.country].filter(Boolean).join(', '),
+    lat: Number(x.latitude),
+    lon: Number(x.longitude),
+  }))
+}
+
 export async function pedirClima(lat: number, lon: number): Promise<Clima> {
   const url =
     'https://api.open-meteo.com/v1/forecast' +
@@ -29,8 +54,8 @@ export async function pedirClima(lat: number, lon: number): Promise<Clima> {
     '&current=temperature_2m,apparent_temperature,weather_code' +
     '&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
     '&timezone=auto&forecast_days=1'
-  const r = await fetch(url)
-  if (!r.ok) throw new Error(`clima ${r.status}`)
+  const r = await fetch(url, { signal: AbortSignal.timeout?.(12_000) })
+  if (!r.ok) throw new Error(`el servicio de clima respondió ${r.status}`)
   const d = await r.json()
   return {
     temp: Math.round(d.current.temperature_2m),

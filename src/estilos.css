@@ -182,6 +182,32 @@ body {
   margin-top: 14px;
   width: 100%;
 }
+.sugerencias {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sugerencias button {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  background: var(--fondo);
+  color: var(--texto);
+  border: 1px solid #25324f;
+  border-radius: 12px;
+  padding: 10px 14px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sugerencias small {
+  color: var(--suave);
+}
 .chico {
   color: var(--suave);
   font-size: 0.85rem;
