@@ -93,7 +93,9 @@ try {
   $vbs = Join-Path $Dir 'iniciar.vbs'
   $js = Join-Path $App 'servidor\servidor.mjs'
   $log = Join-Path $Dir 'servidor.log'
-  $linea = 'sh.Run "cmd /c ""' + $node.Source + '"" ""' + $js + '"" >> ""' + $log + '"" 2>&1", 0, False'
+  # Ojo con las comillas: cmd /c se come la primera y la última si la línea empieza con comilla,
+  # por eso la orden completa va envuelta en un par extra.
+  $linea = 'sh.Run "cmd /c """"' + $node.Source + '"" ""' + $js + '"" >> ""' + $log + '"" 2>&1""", 0, False'
   Set-Content -Path $vbs -Encoding ASCII -Value @('Set sh = CreateObject("WScript.Shell")', $linea)
 
   $ws = New-Object -ComObject WScript.Shell
@@ -127,7 +129,11 @@ try {
     } catch { }
   }
   if ($listo) { Ok "Nooby está andando: panel en http://127.0.0.1:$Puerto/#/panel" }
-  else { Aviso "No respondió en http://127.0.0.1:$Puerto. Mirá el log: $log (¿el puerto está ocupado?)" }
+  else {
+    Aviso "No respondió en http://127.0.0.1:$Puerto (¿el puerto está ocupado?). Log: $log"
+    if (Test-Path $log) { Get-Content $log -Tail 10 | ForEach-Object { Write-Host "        $_" } }
+    else { Aviso 'El servidor ni siquiera llegó a escribir el log: el lanzador no arrancó.' }
+  }
 
   # ---------- 5. El celu ----------
   if ($adb) {
