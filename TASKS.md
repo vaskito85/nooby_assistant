@@ -30,6 +30,9 @@
 - [x] Presencia por actividad de la PC (fin de los falsos "¿ya te vas?")
 - [x] Acceso desde la red con token + informe de impresoras + comando de voz
 
+## Hecho (v0.4.2)
+- [x] La cara pasa a ser una impresora al llegar un aviso; info al costado hasta OK o 5 min
+
 ## Pendiente
 - [ ] T018 El agente del taller (suite_impresion_3D) tiene que implementar docs/integracion-agente.md
 - [ ] T016 Probar el oído en el celu: ajustar cómo entiende "che nooby" (ver window.__noobyDebug.oido)

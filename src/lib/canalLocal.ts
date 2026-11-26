@@ -21,49 +21,54 @@ export async function estadoLocal(): Promise<EstadoServidor | null> {
   }
 }
 
-/** Escucha avisos y cambios de config del servidor. EventSource reconecta solo. */
-export function conectarLocal(
-  alAviso: (texto: string) => void,
-  alConfig: (config: unknown) => void,
-  alEstado: (conectado: boolean) => void,
+export interface AvisoExterno {
+  texto: string
+  /** Si el agente lo informa: qué dibujo mostrar (terminada, error…). */
+  estado?: import('./impresoras').EstadoImpresora
+  impresora?: string
+}
+
+export interface Escuchas {
+  /** Llegó un aviso de afuera (la impresora, un script…). */
+  alAviso: (aviso: AvisoExterno) => void
+  alConfig: (config: unknown) => void
+  alEstado: (conectado: boolean) => void
   /** El panel de la PC pidió entrenar la frase de despertar. */
-  alEntrenar?: (frase: string) => void,
+  alEntrenar?: (frase: string) => void
   /** La PC informa hace cuánto fue la última tecla o movimiento del mouse (ms). */
-  alActividad?: (idleMs: number) => void,
-): () => void {
+  alActividad?: (idleMs: number) => void
+  /** El agente de las impresoras mandó un informe nuevo. */
+  alImpresoras?: (informe: import('./impresoras').InformeImpresoras) => void
+}
+
+/** Escucha avisos y cambios del servidor. EventSource reconecta solo. */
+export function conectarLocal(e: Escuchas): () => void {
   const es = new EventSource('/api/eventos')
-  es.onopen = () => alEstado(true)
-  es.onerror = () => alEstado(false)
-  es.addEventListener('aviso', (e) => {
-    try {
-      const { texto } = JSON.parse((e as MessageEvent).data)
-      if (typeof texto === 'string') alAviso(texto)
-    } catch {
-      /* se ignora */
-    }
+  es.onopen = () => e.alEstado(true)
+  es.onerror = () => e.alEstado(false)
+  const al = (nombre: string, fn: (datos: Record<string, unknown>) => void) =>
+    es.addEventListener(nombre, (ev) => {
+      try {
+        fn(JSON.parse((ev as MessageEvent).data))
+      } catch {
+        /* mensaje que no se entiende: se ignora */
+      }
+    })
+  al('aviso', (d) => {
+    if (typeof d.texto !== 'string') return
+    e.alAviso({
+      texto: d.texto,
+      estado: typeof d.estado === 'string' ? (d.estado as AvisoExterno['estado']) : undefined,
+      impresora: typeof d.impresora === 'string' ? d.impresora : undefined,
+    })
   })
-  es.addEventListener('actividad', (e) => {
-    try {
-      const { idleMs } = JSON.parse((e as MessageEvent).data)
-      if (typeof idleMs === 'number') alActividad?.(idleMs)
-    } catch {
-      /* se ignora */
-    }
+  al('actividad', (d) => {
+    if (typeof d.idleMs === 'number') e.alActividad?.(d.idleMs)
   })
-  es.addEventListener('entrenar', (e) => {
-    try {
-      const { frase } = JSON.parse((e as MessageEvent).data)
-      alEntrenar?.(typeof frase === 'string' && frase ? frase : 'che nooby')
-    } catch {
-      /* se ignora */
-    }
-  })
-  es.addEventListener('config', (e) => {
-    try {
-      alConfig(JSON.parse((e as MessageEvent).data))
-    } catch {
-      /* se ignora */
-    }
+  al('entrenar', (d) => e.alEntrenar?.(typeof d.frase === 'string' && d.frase ? d.frase : 'che nooby'))
+  al('config', (d) => e.alConfig(d))
+  al('impresoras', (d) => {
+    if (Array.isArray(d.impresoras)) e.alImpresoras?.(d as unknown as import('./impresoras').InformeImpresoras)
   })
   return () => es.close()
 }

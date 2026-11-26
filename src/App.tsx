@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react'
 import { Cara, type Humor } from './Cara'
+import { ImpresoraAnimada } from './ImpresoraAnimada'
+import { PanelImpresora } from './PanelImpresora'
 import { Pensamiento } from './Pensamiento'
 import { pcActivo, type ActividadPc } from './lib/actividad'
-import { describirImpresoras } from './lib/impresoras'
+import { describirImpresoras, inferirEstado, type EstadoImpresora, type InformeImpresoras } from './lib/impresoras'
 import { comentarioPorMovimiento, FRASE_HOLA_DE_NUEVO, FRASE_YA_TE_VAS } from './lib/comentarios'
 import { Mirada } from './lib/mirada'
-import { detectarLlamado, interpretar, type Orden } from './lib/voz'
+import { detectarLlamado, esConfirmacion, interpretar, type Orden } from './lib/voz'
 import { callar, desbloquear, hablar, sonar, type Sonido } from './lib/audio'
 import { frase, pedirClima } from './lib/clima'
 import { aplicarRemota, cargarAjustes, guardarAjustes, limpiarLlamadas, temaConfig, type Ajustes } from './lib/config'
@@ -22,6 +24,7 @@ declare global {
 }
 
 const MIN = 60_000
+const AVISO_IMPRESORA_MS = 5 * MIN // el aviso de la impresora queda en pantalla hasta el OK o hasta este tiempo
 const INTENTOS_ENTRENAMIENTO = 5 // cuántas veces repite la frase al entrenar
 const ENTRENAMIENTO_MAX_MS = 120_000 // si nadie dice nada, se cancela solo
 // Mientras no hay nada entrenado, el reconocedor espera estas (el modelo no conoce "nooby": son lo más parecido que sabe).
@@ -44,6 +47,9 @@ const RETOS = [
 interface Aviso {
   texto: string
   sonido: Sonido
+  /** Solo avisos de la impresora: qué dibujo mostrar. */
+  estado?: EstadoImpresora
+  impresora?: string
 }
 
 function minutos(ms: number) {
@@ -63,6 +69,7 @@ export function App() {
   const [enojado, setEnojado] = useState(false)
   const [ausenteLargo, setAusenteLargo] = useState(false)
   const [pensando, setPensando] = useState(false)
+  const [informe, setInforme] = useState<InformeImpresoras>({ ts: null, impresoras: [] })
   // Oído: 'sin' = no disponible (navegador común); 'listo' = esperando "che nooby"; 'atento' = ya respondió y escucha el pedido
   const [oido, setOido] = useState<'sin' | 'listo' | 'atento'>('sin')
   const [oyo, setOyo] = useState('')
@@ -85,6 +92,7 @@ export function App() {
     new Sentado({ limiteMs: ajustes.aguaMin * MIN, graciaMs: 10_000, ausenciaResetMs: 15 * MIN, repetirMs: Math.max(1, ajustes.aguaMin) * MIN }),
   )
   const alarma = useRef<number | null>(null)
+  const timerCierreAviso = useRef<number | null>(null)
   const presenteAntes = useRef(false)
   const ultimaVista = useRef(0)
   const visibleAntes = useRef(false)
@@ -121,9 +129,14 @@ export function App() {
   }, [])
 
   const lanzarAviso = useCallback(
-    (texto: string, sonido: Sonido, insistir: boolean, opciones: { cerrarEn?: number; forzarVoz?: boolean } = {}) => {
+    (
+      texto: string,
+      sonido: Sonido,
+      insistir: boolean,
+      opciones: { cerrarEn?: number; forzarVoz?: boolean; estado?: EstadoImpresora; impresora?: string } = {},
+    ) => {
       cortarAlarma()
-      setAviso({ texto, sonido })
+      setAviso({ texto, sonido, estado: opciones.estado, impresora: opciones.impresora })
       const habla = opciones.forzarVoz || ajustesRef.current.voz
       // Solo la alarma de la impresión suena como alarma. Todo lo demás se dice en voz alta, sin "ding" antes;
       // si la voz está apagada, suena la campanita para que el aviso no pase en silencio.
@@ -134,8 +147,14 @@ export function App() {
         // La boca se mueve mientras habla: en el APK el fin lo avisa el motor de voz; si no, se estima por el largo del texto.
         window.setTimeout(() => setHablando(false), Math.max(2500, texto.length * 75))
       }
-      if (opciones.cerrarEn) {
-        window.setTimeout(() => setAviso((a) => (a?.texto === texto ? null : a)), opciones.cerrarEn)
+      // La alarma de la impresora se queda hasta que digas OK o pasen 5 minutos; lo demás se cierra solo antes.
+      if (timerCierreAviso.current) window.clearTimeout(timerCierreAviso.current)
+      const cierre = opciones.cerrarEn ?? (sonido === 'alarma' ? AVISO_IMPRESORA_MS : undefined)
+      if (cierre) {
+        timerCierreAviso.current = window.setTimeout(() => {
+          cortarAlarma()
+          setAviso((a) => (a?.texto === texto ? null : a))
+        }, cierre)
       }
       if (insistir) {
         let veces = 0
@@ -150,6 +169,7 @@ export function App() {
 
   const entendido = () => {
     cortarAlarma()
+    if (timerCierreAviso.current) window.clearTimeout(timerCierreAviso.current)
     callar()
     setAviso(null)
     setHablando(false)
@@ -335,19 +355,26 @@ export function App() {
       if (!ok) huboCorte = true
       else if (huboCorte) location.reload()
     }
-    return conectarLocal(
-      (texto) => lanzarAviso(texto, 'alarma', true),
-      (cfg) => {
+    return conectarLocal({
+      alAviso: (a) => {
+        // Aviso de la impresora: la cara pasa a ser una impresora y la info queda al costado hasta el OK o 5 minutos.
+        lanzarAviso(a.texto, 'alarma', true, { estado: a.estado, impresora: a.impresora })
+        void leerImpresoras()
+          .then(setInforme)
+          .catch(() => {})
+      },
+      alConfig: (cfg) => {
         const nuevo = aplicarRemota(ajustesRef.current, cfg)
         guardarAjustes(nuevo)
         setAjustes(nuevo)
       },
-      estadoEnlace,
-      (frase) => iniciarEntrenamientoRef.current(frase),
-      (idleMs) => {
+      alEstado: estadoEnlace,
+      alEntrenar: (frase) => iniciarEntrenamientoRef.current(frase),
+      alActividad: (idleMs) => {
         actividadPcRef.current = { idleMs, en: Date.now() }
       },
-    )
+      alImpresoras: setInforme,
+    })
   }, [modo, lanzarAviso])
 
   // Dentro del APK no hay nadie que toque "despertar": arranca solo.
@@ -548,6 +575,11 @@ export function App() {
     const dbg = window.__noobyDebug ?? (window.__noobyDebug = {})
     const previos = (dbg.oido as string[] | undefined) ?? []
     if (final) dbg.oido = [...previos, texto].slice(-15) // para ver cómo entiende "che nooby" y ajustar
+    // Mientras suena el aviso de la impresora, lo único que importa es el "OK".
+    if (avisoRef.current?.sonido === 'alarma') {
+      if (final && esConfirmacion(texto)) entendido()
+      return
+    }
     if (entrenandoRef.current) {
       if (final) registrarIntento(texto)
       return
@@ -577,17 +609,18 @@ export function App() {
 
   // Esperando "che nooby" el celu escucha con gramática cerrada (barato y preciso); atento, con vocabulario libre.
   const entrenandoActivo = entrenando !== null
+  const alarmaActiva = aviso?.sonido === 'alarma' // con la alarma sonando se escucha en modo libre, para entender el "OK"
   const llamadasClave = ajustes.llamadas.join('|')
   useEffect(() => {
     // Esperando el llamado, el reconocedor solo puede oír tus frases entrenadas (o las de defecto si no entrenaste ninguna).
     const frases = ajustesRef.current.llamadas.length > 0 ? ajustesRef.current.llamadas : GRAMATICA_DEFECTO
     const gramatica = JSON.stringify([...frases, '[unk]'])
     try {
-      window.NoobyNativo?.modoOido?.(oido === 'atento' || entrenandoActivo ? 'libre' : 'llamado', gramatica)
+      window.NoobyNativo?.modoOido?.(oido === 'atento' || entrenandoActivo || alarmaActiva ? 'libre' : 'llamado', gramatica)
     } catch {
       /* APK viejo: su modoOido solo recibe el modo */
     }
-  }, [oido, entrenandoActivo, llamadasClave])
+  }, [oido, entrenandoActivo, alarmaActiva, llamadasClave])
 
   useEffect(() => {
     const alOyo = (e: Event) => alOirRef.current((e as CustomEvent).detail)
@@ -653,6 +686,7 @@ export function App() {
                 : 'normal'
 
   const enlaceOk = ntfyOk === true
+  const estadoAviso: EstadoImpresora = aviso?.estado ?? inferirEstado(aviso?.texto ?? '')
 
   return (
     <main className="app pantalla" onPointerDown={seguirDedo}>
@@ -674,8 +708,15 @@ export function App() {
         <>
           {/* Un lado: la cara, siempre en el mismo lugar y del mismo tamaño. */}
           <section className="lado-cara">
-            <Cara humor={humor} alTocar={alTocarCara} />
-            <Pensamiento visible={pensando} ok={enlaceOk} />
+            {aviso?.sonido === 'alarma' ? (
+              // Aviso de la impresora: en el lugar de la cara, una impresora (mismo tamaño: nada se corre).
+              <ImpresoraAnimada estado={estadoAviso} />
+            ) : (
+              <>
+                <Cara humor={humor} alTocar={alTocarCara} />
+                <Pensamiento visible={pensando} ok={enlaceOk} />
+              </>
+            )}
           </section>
 
           {/* El otro lado: zonas fijas, así nada se corre cuando cambia el contenido. */}
@@ -691,7 +732,9 @@ export function App() {
             </p>
 
             <div className="zona-mensaje">
-              {aviso ? (
+              {aviso?.sonido === 'alarma' ? (
+                <PanelImpresora texto={aviso.texto} estado={estadoAviso} informe={informe} alOk={entendido} />
+              ) : aviso ? (
                 <div className={`burbuja ${aviso.sonido}`} role="alert">
                   <p>{aviso.texto}</p>
                   <button className={`boton grande ${aviso.sonido}`} onClick={entendido}>

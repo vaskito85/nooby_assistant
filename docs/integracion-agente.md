@@ -38,12 +38,20 @@ Si el token se filtra: "Generar token nuevo" en el panel y actualizarlo en el ag
 Encabezados: `Content-Type: application/json` y `X-Token: <token>`.
 
 ```json
-{ "texto": "Che, la impresión terminó en la H2C" }
+{ "texto": "Che, la impresión terminó en la H2C", "estado": "terminada", "impresora": "H2C" }
 ```
 
 - `texto`: obligatorio, hasta 300 caracteres. Frase corta, en español rioplatense, tal como se tiene que decir en voz alta.
+- `estado`: opcional. Uno de `imprimiendo`, `terminada`, `error`, `pausa`. Le dice a la cara qué dibujo mostrar. Si no viene, Nooby lo
+  deduce del texto ("terminó" → terminada, "falló"/"se cortó" → error, "pausa" → pausa, el resto → imprimiendo), pero **conviene mandarlo**.
+- `impresora`: opcional, el nombre de la impresora (hasta 40 caracteres).
 - Respuestas: `200 {"ok":true,"pantallas":1}` (`pantallas` = cuántas caras abiertas lo recibieron; 0 = el celu no está),
   `400` JSON inválido o falta `texto`, `401` token faltante o incorrecto, `415` falta `Content-Type: application/json`.
+
+**Qué pasa en la pantalla del celu:** la cara de Nooby se reemplaza por una **impresora 3D dibujada** (imprimiendo: el cabezal barre y el objeto
+crece; terminada: objeto completo con tilde verde; error: cruz roja; pausa: símbolo de pausa). Al costado quedan el texto del aviso y el estado
+de cada impresora, tomado del último `POST /api/impresoras` (por eso conviene mandar ese informe **antes** del aviso). Todo queda hasta que el
+usuario diga "OK" o toque el botón, o hasta que pasen **5 minutos**. La alarma suena unas veces y después se calla; la pantalla sigue.
 
 **Usarlo solo para lo importante** (terminó, falló, se cortó la conexión imprimiendo, pausa por error, rollo por acabarse).
 Suena fuerte y se repite hasta que el usuario lo descarta: no mandar "empezó" ni avances por acá; para eso está `/api/impresoras`.
@@ -106,7 +114,7 @@ async function aNooby(ruta, cuerpo) {
 }
 
 // Al terminar una impresión (junto al aviso de Telegram):
-await aNooby('/api/aviso', { texto: `Che, la impresión terminó en la ${impresora.nombre}` })
+await aNooby('/api/aviso', { texto: `Che, la impresión terminó en la ${impresora.nombre}`, estado: 'terminada', impresora: impresora.nombre })
 
 // Cada vez que cambia algo y cada 30-60 s mientras se imprime:
 await aNooby('/api/impresoras', { impresoras: todas.map((p) => ({ nombre: p.nombre, estado: p.estado, progreso: p.pct, restanteMin: p.faltanMin })) })

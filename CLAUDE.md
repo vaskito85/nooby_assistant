@@ -50,6 +50,10 @@ Web app de una pantalla (Vite + React + TS) que se muestra en un celu viejo (Gal
 - **Acceso desde otras máquinas** (Raspberry/agente de impresoras): panel > sección 4 abre `escuchar: 0.0.0.0` + token. Desde la red SOLO se acepta
   `POST /api/aviso` y `POST /api/impresoras` con `X-Token`; el resto da 403. Lo que llega por localhost (panel, celu por USB) no pide token pero valida
   el Host (anti DNS-rebinding). Contrato completo para el otro agente: `docs/integracion-agente.md`. Voz: "¿cómo van las impresoras?" lee el último informe.
+- **Aviso de la impresora** (alarma): la cara se reemplaza por `ImpresoraAnimada` (mismo cuadro que la cara: nada se corre; SVG con SMIL: imprimiendo / terminada ✓ /
+  error ✗ / pausa) y el costado muestra `PanelImpresora` (texto + estado de cada impresora del último informe, errores primero, máx. 3). Se cierra con "OK" (botón o voz:
+  mientras suena la alarma el micrófono pasa a modo libre) o a los 5 min (`AVISO_IMPRESORA_MS`). El estado viene en `POST /api/aviso {estado}` o se deduce del texto
+  (`inferirEstado`). Un aviso nuevo reemplaza al anterior y reinicia la cuenta.
 - La cámara se auto-frena: si una lectura tarda mucho (celu cargado), espera el doble antes de la siguiente (`msInferencia` en __noobyDebug).
 - Depurar el celu: `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>` + CDP; `window.__noobyDebug` trae ciclos, cuadros,
   conCara, msInferencia. La app del celu solo se reinstala si cambia su versionName (si no, se pierden los permisos).

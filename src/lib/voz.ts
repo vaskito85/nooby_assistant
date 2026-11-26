@@ -90,3 +90,8 @@ export function interpretar(texto: string): Orden | null {
   if (/\bayuda\b|\bque sabes\b|\bque podes\b|\bque haces\b/.test(t)) return 'ayuda'
   return null
 }
+
+/** ¿Te están diciendo "OK" / "listo" para cerrar un aviso? (se usa mientras suena la alarma de la impresora) */
+export function esConfirmacion(texto: string): boolean {
+  return /\b(ok|okey|okay|oka|oke|listo|entendido|gracias|basta|callate|silencio|dale|ya esta)\b/.test(normalizar(texto))
+}

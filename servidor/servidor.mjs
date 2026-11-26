@@ -375,9 +375,14 @@ async function manejar(req, res) {
   if (ruta === '/api/aviso' && req.method === 'POST') {
     if (!String(req.headers['content-type']).includes('application/json')) return json(res, 415, { error: 'usá application/json: {"texto":"..."}' })
     try {
-      const { texto } = JSON.parse(await leerCuerpo(req))
+      const { texto, estado: est, impresora } = JSON.parse(await leerCuerpo(req))
       if (typeof texto !== 'string' || !texto.trim()) return json(res, 400, { error: 'falta texto' })
-      emitir('aviso', { texto: texto.trim().slice(0, 300) })
+      // Opcionales: con "estado" la cara dibuja la impresora que corresponde (terminada, error…); si no, lo deduce del texto.
+      emitir('aviso', {
+        texto: texto.trim().slice(0, 300),
+        estado: ESTADOS_IMPRESORA.includes(est) ? est : undefined,
+        impresora: typeof impresora === 'string' && impresora.trim() ? impresora.trim().slice(0, 40) : undefined,
+      })
       return json(res, 200, { ok: true, pantallas: clientes.size })
     } catch {
       return json(res, 400, { error: 'JSON inválido' })

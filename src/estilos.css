@@ -562,3 +562,126 @@ body {
 .ficha:hover {
   border-color: var(--alerta);
 }
+
+/* =====================================================================
+   Aviso de la impresora: la cara pasa a ser una impresora 3D y la info queda al costado.
+   La impresora ocupa EXACTAMENTE el mismo cuadro que la cara: nada se corre.
+   ===================================================================== */
+.imp {
+  width: min(82%, 72vmin);
+  aspect-ratio: 1 / 0.8;
+}
+.imp svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.imp-marco {
+  stroke: var(--suave);
+}
+.imp-objeto {
+  fill: var(--ojo);
+}
+.imp[data-estado='error'] .imp-objeto {
+  fill: var(--alerta);
+}
+.imp[data-estado='pausa'] .imp-objeto {
+  fill: #f59e0b;
+}
+.imp-cabezal {
+  fill: var(--panel);
+  stroke: var(--ojo);
+  stroke-width: 3;
+  stroke-linejoin: round;
+}
+.imp[data-estado='error'] .imp-cabezal {
+  stroke: var(--alerta);
+}
+.imp-ok {
+  fill: var(--ok);
+}
+.imp-mal {
+  fill: var(--alerta);
+}
+.imp-pausa {
+  fill: #f59e0b;
+}
+
+.panel-imp {
+  width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+.panel-imp .titulo {
+  margin: 0;
+  font-size: clamp(1.1rem, 4.2vmin, 1.8rem);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.panel-imp[data-estado='terminada'] .titulo {
+  color: var(--ok);
+}
+.panel-imp[data-estado='error'] .titulo {
+  color: var(--alerta);
+}
+.panel-imp[data-estado='pausa'] .titulo {
+  color: #f59e0b;
+}
+.lista-imp {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lista-imp li {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 7px 12px;
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: 12px;
+  text-align: left;
+}
+.lista-imp li[data-estado='error'] {
+  border-color: var(--alerta);
+}
+.lista-imp li[data-estado='pausa'] {
+  border-color: #f59e0b;
+}
+.lista-imp .nom {
+  font-weight: 700;
+}
+.lista-imp .est {
+  color: var(--suave);
+  font-size: 0.92rem;
+  text-align: right;
+}
+.lista-imp .barra {
+  grid-column: 1 / -1;
+  height: 6px;
+  background: var(--fondo);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.lista-imp .barra i {
+  display: block;
+  height: 100%;
+  background: var(--ojo);
+}
+.panel-imp .pista {
+  margin: 0;
+}
