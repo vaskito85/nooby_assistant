@@ -151,7 +151,7 @@ export function Panel() {
     setNotaIa('Probando…')
     try {
       const r = await charlarIA([{ rol: 'yo', texto: 'Presentate en una frase corta.' }], 0)
-      setNotaIa(r.error ? `No anduvo: ${r.texto}` : `Anda ✓ Nooby dice: «${r.texto}»`)
+      setNotaIa(r.error ? `No anduvo: ${r.texto}${r.detalle ? ` (${r.detalle})` : ''}` : `Anda ✓ Nooby dice: «${r.texto}»`)
     } catch (e) {
       setNotaIa(`No pude probar: ${e instanceof Error ? e.message : 'error'}`)
     }

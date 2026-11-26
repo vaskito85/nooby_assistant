@@ -747,8 +747,8 @@ async function manejar(req, res) {
     } catch (e) {
       const tipo = e instanceof ErrorIA ? e.tipo : 'ia'
       if (!(e instanceof ErrorIA)) console.log('[ia] error:', e)
-      else console.log(`[ia] ${tipo}`)
-      return json(res, 200, { error: tipo, texto: ERRORES[tipo] ?? ERRORES.ia })
+      else console.log(`[ia] ${tipo}${e.detalle ? ': ' + e.detalle : ''}`)
+      return json(res, 200, { error: tipo, texto: ERRORES[tipo] ?? ERRORES.ia, detalle: e instanceof ErrorIA ? e.detalle : undefined })
     }
   }
 

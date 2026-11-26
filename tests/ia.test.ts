@@ -136,6 +136,28 @@ describe('charlar', () => {
     }
   })
 
+  it('si la API rechaza la herramienta (400), reintenta ese turno sin herramientas', async () => {
+    const cuerpos: Array<Record<string, unknown>> = []
+    let n = 0
+    const fetchFn = async (_u: string, init: { body: string }) => {
+      cuerpos.push(JSON.parse(init.body))
+      if (n++ === 0) return { ok: false, status: 400, text: async () => '{"error":{"message":"Failed to call a function"}}', json: async () => ({}) }
+      return { ok: true, status: 200, text: async () => '', json: async () => ({ choices: [{ message: { content: 'Hola, soy Nooby.' } }] }) }
+    }
+    const r = await charlar({ clave: 'k', historial, contexto: ctx, ejecutar: async () => ({}), fetchFn })
+    expect(r.texto).toBe('Hola, soy Nooby.')
+    expect(cuerpos[0].tools).toBeDefined()
+    expect(cuerpos[1].tools).toBeUndefined()
+  })
+
+  it('un error HTTP trae el detalle que dijo la API', async () => {
+    const fetchFn = async () => ({ ok: false, status: 404, text: async () => '{"error":{"message":"The model does not exist"}}', json: async () => ({}) })
+    await expect(charlar({ clave: 'k', historial, contexto: ctx, ejecutar: async () => ({}), fetchFn })).rejects.toMatchObject({
+      tipo: 'ia',
+      detalle: 'HTTP 404 The model does not exist',
+    })
+  })
+
   it('sin internet es un error de red', async () => {
     const fetchFn = async () => {
       throw new Error('ENOTFOUND')

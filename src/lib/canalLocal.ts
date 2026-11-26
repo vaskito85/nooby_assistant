@@ -229,6 +229,8 @@ export interface MensajeCharla {
 export interface RespuestaCharla {
   texto: string
   error?: 'sin_clave' | 'clave' | 'cupo' | 'red' | 'ia'
+  /** Lo que respondió la API cuando falló (solo para mostrar en el panel). */
+  detalle?: string
 }
 
 export async function charlarIA(mensajes: MensajeCharla[], sentadoMin: number): Promise<RespuestaCharla> {

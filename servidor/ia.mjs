@@ -116,28 +116,45 @@ export const ERRORES = {
 }
 
 export class ErrorIA extends Error {
-  constructor(tipo) {
+  constructor(tipo, detalle = '') {
     super(ERRORES[tipo] ?? ERRORES.ia)
     this.tipo = tipo
+    /** Qué dijo la API (para el log y el panel; no se dice en voz alta). */
+    this.detalle = detalle
   }
 }
 
 /** Una vuelta de la API. Traduce los códigos HTTP a tipos de error propios. */
-async function pedir({ fetchFn, clave, modelo, mensajes }) {
+async function pedir({ fetchFn, clave, modelo, mensajes, herramientas = true }) {
   let r
   try {
     r = await fetchFn(process.env.NOOBY_IA_URL || URL_GROQ, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${clave}` },
-      body: JSON.stringify({ model: modelo, messages: mensajes, tools: HERRAMIENTAS, tool_choice: 'auto', temperature: 0.6, max_tokens: 300 }),
+      body: JSON.stringify({
+        model: modelo,
+        messages: mensajes,
+        ...(herramientas ? { tools: HERRAMIENTAS, tool_choice: 'auto' } : {}),
+        temperature: 0.6,
+        max_tokens: 300,
+      }),
       signal: AbortSignal.timeout(20_000),
     })
   } catch {
-    throw new ErrorIA('red')
+    throw new ErrorIA('red', 'sin conexión con la API')
   }
   if (r.status === 401 || r.status === 403) throw new ErrorIA('clave')
   if (r.status === 429) throw new ErrorIA('cupo')
-  if (!r.ok) throw new ErrorIA('ia')
+  if (!r.ok) {
+    let det = ''
+    try {
+      const j = JSON.parse(await r.text())
+      det = String(j?.error?.message ?? j?.error?.code ?? '')
+    } catch {
+      /* sin cuerpo legible */
+    }
+    throw new ErrorIA('ia', `HTTP ${r.status} ${det}`.trim().slice(0, 300))
+  }
   try {
     return (await r.json()).choices?.[0]?.message ?? null
   } catch {
@@ -153,7 +170,15 @@ export async function charlar({ clave, modelo, historial, contexto, ejecutar, fe
   if (!clave) throw new ErrorIA('sin_clave')
   const msgs = [{ role: 'system', content: instrucciones(contexto) }, ...historial]
   for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
-    const m = await pedir({ fetchFn, clave, modelo: modelo || MODELO_POR_DEFECTO, mensajes: msgs })
+    const base = { fetchFn, clave, modelo: modelo || MODELO_POR_DEFECTO, mensajes: msgs }
+    let m
+    try {
+      m = await pedir(base)
+    } catch (e) {
+      // Algunos modelos fallan al armar una llamada a herramienta (HTTP 400): ese turno se contesta sin herramientas.
+      if (e instanceof ErrorIA && e.tipo === 'ia' && /HTTP 400/.test(e.detalle)) m = await pedir({ ...base, herramientas: false })
+      else throw e
+    }
     if (!m) throw new ErrorIA('ia')
     const llamadas = Array.isArray(m.tool_calls) ? m.tool_calls : []
     if (llamadas.length === 0) {
