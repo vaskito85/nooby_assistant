@@ -23,6 +23,9 @@
 ## Hecho (v0.3.2)
 - [x] Palabra clave con gramática cerrada (llamado/libre) y freno automático de la cámara
 
+## Hecho (v0.8.0)
+- [x] Oído con Whisper: el APK (0.5.0) usa un micrófono propio, guarda el audio de cada frase y lo manda a la web (evento nooby-audio); el servidor lo transcribe con Whisper de Groq (/api/transcribir) y la web usa ese texto en vez del de Vosk. Vosk sigue para "che nooby" y como respaldo
+
 ## Hecho (v0.7.0)
 - [x] Panel rediseñado (menú lateral/en cuadrícula, tarjetas, estado general, interruptores) y modelo de Groq actualizado a openai/gpt-oss-120b con respaldo automático si un modelo deja de existir
 
