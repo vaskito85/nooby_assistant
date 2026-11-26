@@ -149,3 +149,22 @@ export async function leerImpresoras(): Promise<import('./impresoras').InformeIm
   if (!r.ok) throw new Error(`impresoras ${r.status}`)
   return r.json()
 }
+
+/** Le pide al agente (a través del servidor) una foto de la impresora. */
+export async function pedirFoto(impresora: string) {
+  const r = await fetch('/api/pedido', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ impresora }),
+  })
+  if (!r.ok) throw new Error(`el servidor respondió ${r.status}`)
+}
+
+/** Cancela el pedido de foto (si el agente todavía no lo atendió). */
+export async function cancelarPedidoFoto(impresora: string) {
+  await fetch('/api/pedido', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ impresora, cancelar: true }),
+  })
+}

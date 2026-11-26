@@ -14,6 +14,7 @@ export function PanelImpresora({
   informe,
   impresora,
   foto,
+  soloUna,
   alOk,
 }: {
   texto: string
@@ -23,6 +24,8 @@ export function PanelImpresora({
   impresora?: string
   /** Dirección de la foto que llegó con el aviso, si hay. */
   foto?: string
+  /** Mostrar solo la tarjeta de `impresora` (cuando la imagen ya ocupa lugar). */
+  soloUna?: boolean
   alOk: () => void
 }) {
   const [fotoRota, setFotoRota] = useState<string | null>(null)
@@ -32,8 +35,9 @@ export function PanelImpresora({
   const lista = vigente ? ordenarPorRelevancia(informe.impresoras) : []
   // Con foto no queda lugar para todas: solo la tarjeta de la impresora del aviso (o la más relevante).
   const propia = impresora ? lista.find((p) => claveImpresora(p.nombre) === claveImpresora(impresora)) : undefined
-  const filas = conFoto ? (propia ?? lista[0] ? [propia ?? lista[0]] : []) : lista.slice(0, MAX_FILAS)
-  const masOcultas = conFoto ? 0 : lista.length - filas.length
+  const unaSola = conFoto || soloUna
+  const filas = unaSola ? (propia ?? lista[0] ? [propia ?? lista[0]] : []) : lista.slice(0, MAX_FILAS)
+  const masOcultas = unaSola ? 0 : lista.length - filas.length
 
   return (
     <div className={`panel-imp${conFoto ? ' con-foto' : ''}`} data-estado={estado} role="alert">

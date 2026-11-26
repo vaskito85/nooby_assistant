@@ -203,6 +203,29 @@ function leerCuerpo(req, max = 8192) {
   })
 }
 
+// ---------- pedidos de foto ----------
+// La cara le pide una foto de una impresora; el agente (otra máquina) consulta GET /api/pedidos, saca la foto y la manda
+// por POST /api/foto. Así Nooby nunca tiene que entrar a la red del agente.
+const PEDIDO_VIDA_MS = 45_000 // si el agente no responde en este tiempo, el pedido se descarta
+const pedidos = new Map() // clave de la impresora -> { id, nombre, clave, hasta }
+const esperandoPedidos = new Set() // agentes con una consulta larga abierta
+
+function pedidosVigentes() {
+  const ahora = Date.now()
+  for (const [k, p] of pedidos) if (p.hasta <= ahora) pedidos.delete(k)
+  return [...pedidos.values()].map((p) => ({ id: p.id, impresora: p.nombre, clave: p.clave, restanteMs: p.hasta - ahora }))
+}
+
+/** Le avisa de inmediato a los agentes que estaban esperando (consulta larga) que hay un pedido nuevo. */
+function despertarEsperando() {
+  const lista = pedidosVigentes()
+  for (const w of [...esperandoPedidos]) {
+    clearTimeout(w.timer)
+    esperandoPedidos.delete(w)
+    if (!w.res.writableEnded) json(w.res, 200, { pedidos: lista })
+  }
+}
+
 /** Lee el cuerpo como bytes (para la foto). Corta si supera el máximo. */
 function leerBinario(req, max) {
   return new Promise((resolve, reject) => {
@@ -347,8 +370,11 @@ async function manejar(req, res) {
   } else {
     // Otra máquina de la red (ej. la Raspberry): solo puede mandar avisos e informes de impresoras, y con token.
     const ruta0 = new URL(req.url ?? '/', 'http://local').pathname
-    if (req.method !== 'POST' || (ruta0 !== '/api/aviso' && ruta0 !== '/api/impresoras' && ruta0 !== '/api/foto')) {
-      return json(res, 403, { error: 'desde la red solo se aceptan POST /api/aviso, /api/impresoras y /api/foto' })
+    const permitido =
+      (req.method === 'POST' && (ruta0 === '/api/aviso' || ruta0 === '/api/impresoras' || ruta0 === '/api/foto')) ||
+      (req.method === 'GET' && ruta0 === '/api/pedidos')
+    if (!permitido) {
+      return json(res, 403, { error: 'desde la red solo se aceptan POST /api/aviso, /api/impresoras, /api/foto y GET /api/pedidos' })
     }
     if (!tokenValido(req)) return json(res, 401, { error: 'falta el encabezado X-Token o no coincide' })
   }
@@ -365,6 +391,7 @@ async function manejar(req, res) {
       actividadPcMs: actividadPc ? actividadPc.idleMs : null,
       impresorasTs: impresoras.ts,
       fotos: fotos.size,
+      pedidos: pedidosVigentes().length,
     })
   }
 
@@ -468,6 +495,46 @@ async function manejar(req, res) {
     }
   }
 
+  if (ruta === '/api/pedidos' && req.method === 'GET') {
+    // Lo consulta el agente. Con ?espera=20 la respuesta espera hasta 20 s a que haya un pedido (así contesta casi al instante
+    // sin tener que consultar cada segundo).
+    const espera = Math.min(25, Math.max(0, Number(url.searchParams.get('espera')) || 0))
+    const lista = pedidosVigentes()
+    if (lista.length > 0 || espera === 0) return json(res, 200, { pedidos: lista })
+    const w = {
+      res,
+      timer: setTimeout(() => {
+        esperandoPedidos.delete(w)
+        if (!res.writableEnded) json(res, 200, { pedidos: [] })
+      }, espera * 1000),
+    }
+    esperandoPedidos.add(w)
+    res.on('close', () => {
+      clearTimeout(w.timer)
+      esperandoPedidos.delete(w)
+    })
+    return
+  }
+
+  if (ruta === '/api/pedido' && req.method === 'POST') {
+    // Lo manda la cara (por localhost): { "impresora": "H2C" } pide una foto; { "impresora": "H2C", "cancelar": true } la cancela.
+    if (!String(req.headers['content-type']).includes('application/json')) return json(res, 415, { error: 'usá application/json' })
+    try {
+      const c = JSON.parse(await leerCuerpo(req))
+      const nombre = String(c.impresora ?? '').trim().slice(0, 40)
+      const clave = claveImpresora(nombre)
+      if (c.cancelar === true) {
+        pedidos.delete(clave)
+        return json(res, 200, { ok: true })
+      }
+      pedidos.set(clave, { id: randomBytes(6).toString('hex'), nombre, clave, hasta: Date.now() + PEDIDO_VIDA_MS })
+      despertarEsperando()
+      return json(res, 200, { ok: true, clave, esperando: esperandoPedidos.size })
+    } catch {
+      return json(res, 400, { error: 'JSON inválido' })
+    }
+  }
+
   if (ruta === '/api/foto') {
     if (req.method === 'GET') {
       // La pide el celu (por localhost) para mostrarla en el panel.
@@ -493,6 +560,7 @@ async function manejar(req, res) {
       fotos.delete(clave) // re-insertar la deja como la más reciente
       fotos.set(clave, { ts: Date.now(), nombre, buf })
       while (fotos.size > FOTOS_MAX) fotos.delete(fotos.keys().next().value)
+      pedidos.delete(clave) // llegó la foto que se había pedido: el agente no tiene que mandarla de nuevo
       emitir('foto', { impresora: clave, nombre, ts: Date.now() })
       return json(res, 200, { ok: true, impresora: clave, bytes: buf.length })
     }

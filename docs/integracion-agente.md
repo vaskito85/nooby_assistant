@@ -13,7 +13,8 @@ por USB a una PC con Windows. Esa PC tiene un servidor de Nooby (`http://127.0.0
 | Para qué | Qué manda | Qué hace Nooby |
 |---|---|---|
 | **Avisar algo importante** (terminó, falló) | `POST /api/aviso` | Suena una alarma, la cara se pone en alerta y dice el texto en voz alta. Se repite hasta que el usuario toca "Entendido". |
-| **Mostrar una foto de la impresora** | `POST /api/foto` | La foto aparece en el panel de la derecha junto con el aviso, hasta el OK o los 5 minutos. |
+| **Atender pedidos de foto** (el usuario dice "mostrame la H2C") | `GET /api/pedidos` + `POST /api/foto` | La cara le pide la foto; cuando llega, la muestra grande en pantalla con la tarjeta de esa impresora. |
+| **Mostrar una foto junto a un aviso** | `POST /api/foto` | La foto aparece en el panel de la derecha junto con el aviso, hasta el OK o los 5 minutos. |
 | **Contar cómo están las impresoras** | `POST /api/impresoras` | Guarda el último informe. Si el usuario pregunta por voz ("che nooby, ¿cómo van las impresoras?" / "¿cuánto falta?") lo lee en voz alta. |
 
 Nooby **no llama** al agente: consulta lo último que el agente le informó. (Si más adelante hacen falta órdenes hacia el agente,
@@ -29,7 +30,7 @@ por ejemplo "pausá la impresión", se define otro endpoint; hoy no existe.)
    igual que los demás (cifrado), **nunca** en el repo, en logs, ni en mensajes.
 3. Conviene fijar la IP de la PC en el router (reserva DHCP), porque si cambia, la dirección deja de servir.
 
-Desde la red, el servidor **solo** acepta `POST /api/aviso`, `POST /api/impresoras` y `POST /api/foto`, y siempre con el token. Cualquier otra ruta
+Desde la red, el servidor **solo** acepta `POST /api/aviso`, `POST /api/impresoras`, `POST /api/foto` y `GET /api/pedidos`, y siempre con el token. Cualquier otra ruta
 responde 403. No exponer el puerto a internet.
 
 Si el token se filtra: "Generar token nuevo" en el panel y actualizarlo en el agente.
@@ -114,6 +115,47 @@ await fetch(`${url}/api/foto?impresora=${encodeURIComponent(impresora.nombre)}`,
   body: buffer,
   signal: AbortSignal.timeout(5000),
 })
+```
+
+## `GET /api/pedidos` — atender los pedidos de foto
+
+El usuario puede decir *"che nooby, mostrame la H2C"* (o "foto de la A1"). Nooby **nunca le habla al agente**: deja el pedido anotado y el agente lo
+consulta. Así no hay que abrir nada en la Raspberry.
+
+- `GET {url}/api/pedidos?espera=20` con el `X-Token`. Con `espera` (hasta 25 segundos) la respuesta **espera a que haya un pedido** y
+  contesta en el momento en que aparece; si no hay ninguno, contesta `{"pedidos":[]}` a los 20 s y se vuelve a preguntar. Es la forma de enterarse
+  casi al instante sin consultar cada segundo.
+- Respuesta: `{"pedidos":[{"id":"1ae2d5f9ed9c","impresora":"Bambu H2C","clave":"bambu-h2c","restanteMs":44000}]}`. `impresora` es el nombre
+  exacto tal como el agente lo informó en `/api/impresoras` (`nombre`).
+- **Qué hacer con cada pedido:** sacar **una** foto de esa impresora y mandarla con `POST /api/foto?impresora=<ese nombre>`. Al llegar la foto,
+  el pedido se da por cumplido solo (no hay que avisar nada más). Si la impresora no tiene cámara disponible, **ignorar el pedido**: a los 20 s la
+  pantalla explica que no llegó la foto. Un pedido vive 45 s; si el usuario cierra la vista antes, Nooby lo cancela.
+- Es **solo fotos** por ahora (nada de video). Una foto por pedido: no mandar imágenes seguidas.
+- Todo queda dentro de la red local: agente → PC por la red, PC → celu por el cable USB.
+
+```js
+// Bucle de pedidos (corre siempre, en segundo plano; nunca debe tumbar al agente)
+async function atenderPedidosDeNooby() {
+  for (;;) {
+    try {
+      const r = await fetch(`${url}/api/pedidos?espera=20`, { headers: { 'x-token': token }, signal: AbortSignal.timeout(30000) })
+      const { pedidos = [] } = r.ok ? await r.json() : {}
+      for (const p of pedidos) {
+        const jpeg = await sacarFoto(p.impresora) // Buffer con el JPEG, o null si esa impresora no tiene cámara
+        if (!jpeg) continue
+        await fetch(`${url}/api/foto?impresora=${encodeURIComponent(p.impresora)}`, {
+          method: 'POST',
+          headers: { 'content-type': 'image/jpeg', 'x-token': token },
+          body: jpeg,
+          signal: AbortSignal.timeout(8000),
+        })
+      }
+    } catch (e) {
+      console.warn(`[nooby] pedidos: ${e.message}`)
+      await new Promise((ok) => setTimeout(ok, 10_000)) // si Nooby no está, reintentar sin apurar
+    }
+  }
+}
 ```
 
 ## Reglas para que no moleste al resto del agente

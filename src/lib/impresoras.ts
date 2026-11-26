@@ -1,3 +1,5 @@
+import { distancia, normalizar } from './voz'
+
 // Cómo Nooby cuenta el estado de las impresoras, a partir de lo que informa el agente del taller. Lógica pura.
 
 export type EstadoImpresora = 'imprimiendo' | 'libre' | 'pausa' | 'error' | 'offline' | 'terminada'
@@ -120,4 +122,67 @@ export function resumenCorto(p: Impresora): string {
     case 'offline':
       return 'sin conexión'
   }
+}
+
+// ---------- elegir la impresora por el nombre hablado ----------
+// El reconocedor escribe "H2C" como "hache dos ce" y "A1" como "a uno": se traducen letras y números hablados antes de comparar.
+
+const DIGITOS: Record<string, string> = { cero: '0', uno: '1', una: '1', dos: '2', tres: '3', cuatro: '4', cinco: '5', seis: '6', siete: '7', ocho: '8', nueve: '9' }
+const LETRAS: Record<string, string> = {
+  hache: 'h', ce: 'c', be: 'b', de: 'd', efe: 'f', ge: 'g', jota: 'j', ka: 'k', ele: 'l', eme: 'm',
+  ene: 'n', pe: 'p', erre: 'r', ese: 's', te: 't', uve: 'v', equis: 'x', ye: 'y', zeta: 'z',
+}
+
+/** "mostrame la hache dos ce" → "mostramelah2c" */
+function compactar(texto: string): string {
+  return normalizar(texto)
+    .split(' ')
+    .map((w) => DIGITOS[w] ?? LETRAS[w] ?? w)
+    .join('')
+}
+
+/** Menor distancia entre `clave` y cualquier trozo del texto de largo parecido. */
+function distanciaEnTexto(texto: string, clave: string): number {
+  let mejor = Infinity
+  for (let largo = Math.max(1, clave.length - 1); largo <= clave.length + 1; largo++) {
+    for (let i = 0; i + largo <= texto.length; i++) {
+      mejor = Math.min(mejor, distancia(texto.slice(i, i + largo), clave))
+    }
+  }
+  return mejor
+}
+
+/** Palabras que identifican a cada impresora: las que no comparte con otra ("bambu" lo comparten H2C y A1: no sirve). */
+function clavesDistintivas(lista: Impresora[]): string[][] {
+  const tokens = lista.map((p) => normalizar(p.nombre).split(' ').filter(Boolean))
+  return tokens.map((mios, i) => {
+    const ajenos = new Set(tokens.filter((_, j) => j !== i).flat())
+    const claves = mios.filter((t) => !ajenos.has(t) && (t.length >= 2 || /\d/.test(t)))
+    if (mios.length > 1 && mios.join('').length >= 4) claves.push(mios.join('')) // "neptune 4" → "neptune4"
+    return claves.length > 0 ? claves : [mios.join('')]
+  })
+}
+
+export interface Elegida {
+  impresora: Impresora
+  /** true = la nombró; false = no dijo cuál y se eligió la que está imprimiendo (o la primera). */
+  porNombre: boolean
+}
+
+/** Qué impresora quiso decir. Si no nombró ninguna, la que está imprimiendo. */
+export function elegirImpresora(texto: string, lista: Impresora[]): Elegida | null {
+  if (lista.length === 0) return null
+  const hablado = compactar(texto)
+  const claves = clavesDistintivas(lista)
+  let mejor: { i: number; d: number; largo: number } | null = null
+  claves.forEach((cs, i) => {
+    for (const c of cs) {
+      const margen = c.length >= 6 ? 1 : 0 // las claves cortas ("a1", "h2c") tienen que coincidir exacto
+      const d = distanciaEnTexto(hablado, c)
+      if (d <= margen && (!mejor || d < mejor.d || (d === mejor.d && c.length > mejor.largo))) mejor = { i, d, largo: c.length }
+    }
+  })
+  if (mejor) return { impresora: lista[(mejor as { i: number }).i], porNombre: true }
+  const imprimiendo = ordenarPorRelevancia(lista).find((p) => p.estado === 'imprimiendo')
+  return { impresora: imprimiendo ?? lista[0], porNombre: false }
 }

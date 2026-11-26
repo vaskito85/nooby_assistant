@@ -77,6 +77,7 @@ export function detectarLlamado(
 export type Orden =
   | 'tiempoSentado'
   | 'impresoras'
+  | 'verCamara'
   | 'fecha'
   | 'clima'
   | 'hora'
@@ -94,6 +95,13 @@ export type Orden =
   | 'chau'
   | 'saludo'
 
+const VERBOS_VER = /\b(mostra|mostrame|muestra|muestrame|ensena|ensename|dejame ver|quiero ver|veo|ver|foto|fotos|video|camara)\b|\bque se ve\b/
+const PALABRAS_IMPRESORA = /\b(impresora|impresoras|pieza|impresion|h2c|a1|neptun\w*|bambu)\b|\ba uno\b|\bhache\b/
+const PIDE_ESTADO = /\bestado\b|\bcomo (van|va|esta|estan)\b|\bcuanto falta\b|\bimprimiendo\b/
+
+/** ¿Pide VER una impresora (su foto)? "mostrame la H2C", "foto de la A1". "El estado de las impresoras" no: eso es otro pedido. */
+export const pideVerCamara = (t: string) => VERBOS_VER.test(t) && PALABRAS_IMPRESORA.test(t) && !PIDE_ESTADO.test(t)
+
 /**
  * Qué te pidió. null = no se entendió. El orden importa: gana la primera que coincide
  * ("cuánto tiempo llevo sentado" no es el clima; "qué hacés" es charla y "qué sabés hacer" es ayuda).
@@ -103,6 +111,7 @@ export function interpretar(texto: string): Orden | null {
   const t = normalizar(texto)
   if (!t) return null
   if (/(cuanto|hace cuanto|cuantos minutos).*(sentad|llevo)|\bsentad/.test(t)) return 'tiempoSentado'
+  if (pideVerCamara(t)) return 'verCamara'
   if (/\bimpresora|\bimpresion|\bimprimiendo|\bcuanto falta\b/.test(t)) return 'impresoras'
   if (/\bque dia\b|\bque fecha\b|\ba cuanto estamos\b|\bfecha de hoy\b|\bdia de hoy\b/.test(t)) return 'fecha'
   if (/\b(clima|temperatura|llover|lluvia|llueve|llovera|frio|calor|pronostico|paraguas|abrigo|campera)\b|\bel tiempo\b/.test(t)) return 'clima'
@@ -143,6 +152,11 @@ export const CATALOGO: GrupoFrases[] = [
     orden: 'impresoras',
     titulo: 'Las impresoras',
     ejemplos: ['dime el estado de las impresoras', 'cómo van las impresoras', 'cuánto falta', 'qué está imprimiendo', 'cómo va la impresión'],
+  },
+  {
+    orden: 'verCamara',
+    titulo: 'Ver una impresora (foto)',
+    ejemplos: ['mostrame la impresora', 'mostrame la H2C', 'foto de la A1', 'quiero ver la cámara de la impresora', 'qué se ve en la impresora'],
   },
   { orden: 'tiempoSentado', titulo: 'Cuánto llevás sentado', ejemplos: ['cuánto tiempo llevo sentado', 'hace cuánto estoy sentado'] },
   { orden: 'levante', titulo: 'Avisarle que descansaste', ejemplos: ['ya me levanté', 'ya descansé'] },

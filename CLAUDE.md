@@ -57,6 +57,11 @@ Web app de una pantalla (Vite + React + TS) que se muestra en un celu viejo (Gal
 - **Acceso desde otras máquinas** (Raspberry/agente de impresoras): panel > sección 4 abre `escuchar: 0.0.0.0` + token. Desde la red SOLO se acepta
   `POST /api/aviso` y `POST /api/impresoras` con `X-Token`; el resto da 403. Lo que llega por localhost (panel, celu por USB) no pide token pero valida
   el Host (anti DNS-rebinding). Contrato completo para el otro agente: `docs/integracion-agente.md`. Voz: "¿cómo van las impresoras?" lee el último informe.
+- **Foto a pedido**: "mostrame la H2C" → `pedirVerImpresora` elige la impresora por el nombre hablado (`elegirImpresora`: traduce "hache dos ce"/"a uno"/"neptuno cuatro"),
+  `POST /api/pedido` deja el pedido en el servidor (45 s, solo localhost) y el agente lo atiende con `GET /api/pedidos?espera=20` (consulta larga, con token) → `POST /api/foto`.
+  La vista `foto` muestra `VisorFoto` (grande, en el lugar de la cara) + una tarjeta; "pidiéndole la foto…" y, a los 20 s sin foto, explica. Cerrar la vista cancela el pedido. Solo fotos (sin video).
+- **Mensajes**: los comunes se van solos 5 s después de decirse (voz + 5 s); la alarma de la impresora queda hasta el OK o 5 min. Lo que se oye se muestra en vivo (`zona-oyendo`, ✓/✗);
+  si no entiende dice "¿Cómo? No te entendí."
 - **Aviso de la impresora** (alarma): la cara se reemplaza por `ImpresoraAnimada` (mismo cuadro que la cara: nada se corre; SVG con SMIL: imprimiendo / terminada ✓ /
   error ✗ / pausa) y el costado muestra `PanelImpresora` (texto + estado de cada impresora del último informe, errores primero, máx. 3). Se cierra con "OK" (botón o voz:
   mientras suena la alarma el micrófono pasa a modo libre) o a los 5 min (`AVISO_IMPRESORA_MS`). El estado viene en `POST /api/aviso {estado}` o se deduce del texto

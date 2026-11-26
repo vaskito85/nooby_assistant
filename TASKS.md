@@ -42,7 +42,11 @@
 ## Hecho (v0.4.5)
 - [x] Vistas por voz: impresora dibujada al pedir su estado; clima con sol/nubes/lluvia/tormenta/nieve/niebla/luna
 
+## Hecho (v0.4.6)
+- [x] Foto a pedido por voz (pedidos que atiende el agente), lo que se oye en vivo, mensajes que se van solos, "¿Cómo? No te entendí."
+
 ## Pendiente
+- [ ] T020 El agente del taller tiene que atender GET /api/pedidos (docs/integracion-agente.md)
 - [ ] T019 El agente del taller tiene que mandar la foto (POST /api/foto) junto al aviso de terminó/falló
 - [ ] T018 El agente del taller (suite_impresion_3D) tiene que implementar docs/integracion-agente.md
 - [ ] T016 Probar el oído en el celu: ajustar cómo entiende "che nooby" (ver window.__noobyDebug.oido)
