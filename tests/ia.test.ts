@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 // @ts-ignore — módulo .mjs del servidor, sin tipos
-import { charlar, ErrorIA, instrucciones, limpiarMensajes, limpiarRespuesta } from '../servidor/ia.mjs'
+import { armarWav, charlar, ErrorIA, instrucciones, juntarPcm, limpiarMensajes, limpiarRespuesta, limpiarTranscripcion, transcribir } from '../servidor/ia.mjs'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const Buffer = (globalThis as any).Buffer
 
 const ctx = { nombre: 'Ger', ciudad: 'Bahía Blanca', ahora: new Date(2026, 10, 26, 18, 0), sentadoMin: 0 }
 
@@ -183,5 +186,82 @@ describe('charlar', () => {
   it('una respuesta vacía es un error, no silencio', async () => {
     const { fetchFn } = falso([{ message: { content: '  😀 ' } }])
     await expect(charlar({ clave: 'k', historial, contexto: ctx, ejecutar: async () => ({}), fetchFn })).rejects.toMatchObject({ tipo: 'ia' })
+  })
+})
+
+const pcmB64 = (segundos: number) => Buffer.alloc(Math.round(16000 * 2 * segundos)).toString('base64')
+
+describe('armarWav', () => {
+  it('arma un WAV válido de 16 kHz, 16 bits, mono', () => {
+    const pcm = Buffer.alloc(32000)
+    const w = armarWav(pcm)
+    expect(w.length).toBe(44 + 32000)
+    expect(w.toString('ascii', 0, 4)).toBe('RIFF')
+    expect(w.toString('ascii', 8, 12)).toBe('WAVE')
+    expect(w.readUInt32LE(4)).toBe(36 + 32000)
+    expect(w.readUInt16LE(22)).toBe(1)
+    expect(w.readUInt32LE(24)).toBe(16000)
+    expect(w.readUInt16LE(34)).toBe(16)
+    expect(w.readUInt32LE(40)).toBe(32000)
+  })
+})
+
+describe('juntarPcm', () => {
+  it('une los trozos', () => {
+    expect(juntarPcm([pcmB64(1), pcmB64(2)])?.length).toBe(96000)
+  })
+  it('rechaza audio vacío, muy corto, muy largo o con basura', () => {
+    expect(juntarPcm([])).toBeNull()
+    expect(juntarPcm(undefined)).toBeNull()
+    expect(juntarPcm([pcmB64(0.1)])).toBeNull()
+    expect(juntarPcm([pcmB64(30), pcmB64(30)])).toBeNull()
+    expect(juntarPcm(['no es base64 !!!'])).toBeNull()
+    expect(juntarPcm([5 as unknown as string])).toBeNull()
+  })
+})
+
+describe('limpiarTranscripcion', () => {
+  it('devuelve el texto y descarta lo que parece silencio', () => {
+    expect(limpiarTranscripcion({ text: ' Poneme un temporizador de diez minutos. ' })).toBe('Poneme un temporizador de diez minutos.')
+    expect(
+      limpiarTranscripcion({
+        segments: [
+          { text: ' Qué hora es', no_speech_prob: 0.01, avg_logprob: -0.2 },
+          { text: ' Gracias por ver el video', no_speech_prob: 0.9, avg_logprob: -1.2 },
+        ],
+      }),
+    ).toBe('Qué hora es')
+  })
+  it('descarta las frases que Whisper inventa con ruido', () => {
+    expect(limpiarTranscripcion({ text: 'Subtítulos realizados por la comunidad de Amara.org' })).toBe('')
+    expect(limpiarTranscripcion({ text: 'Gracias por ver' })).toBe('')
+    expect(limpiarTranscripcion({})).toBe('')
+  })
+})
+
+describe('transcribir', () => {
+  const pcm = Buffer.alloc(32000)
+  it('manda el WAV con modelo, idioma y la clave, y devuelve el texto', async () => {
+    let visto: { url: string; auth: string; form: FormData } | null = null
+    const fetchFn = async (url: string, init: { headers: Record<string, string>; body: FormData }) => {
+      visto = { url, auth: init.headers.authorization, form: init.body }
+      return { ok: true, status: 200, text: async () => '', json: async () => ({ text: 'Hola Nooby' }) }
+    }
+    expect(await transcribir({ clave: 'k', pcm, fetchFn })).toBe('Hola Nooby')
+    expect(visto!.auth).toBe('Bearer k')
+    expect(visto!.form.get('language')).toBe('es')
+    expect(String(visto!.form.get('model'))).toContain('whisper')
+    expect((visto!.form.get('file') as Blob).size).toBe(44 + 32000)
+  })
+  it('traduce los errores', async () => {
+    await expect(transcribir({ clave: '', pcm })).rejects.toMatchObject({ tipo: 'sin_clave' })
+    for (const [status, tipo] of [[401, 'clave'], [429, 'cupo'], [500, 'ia']] as const) {
+      const fetchFn = async () => ({ ok: false, status, text: async () => '{}', json: async () => ({}) })
+      await expect(transcribir({ clave: 'k', pcm, fetchFn })).rejects.toMatchObject({ tipo })
+    }
+    const sinRed = async () => {
+      throw new Error('x')
+    }
+    await expect(transcribir({ clave: 'k', pcm, fetchFn: sinRed })).rejects.toMatchObject({ tipo: 'red' })
   })
 })

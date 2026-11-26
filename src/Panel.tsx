@@ -144,7 +144,7 @@ export function Panel() {
       .catch(() => undefined)
   }, [modo])
 
-  const guardarClaveIa = async (cambio: { clave?: string; modelo?: string; borrar?: boolean }) => {
+  const guardarClaveIa = async (cambio: { clave?: string; modelo?: string; borrar?: boolean; whisper?: boolean }) => {
     try {
       const i = await guardarIA(cambio)
       setIa(i)
@@ -475,6 +475,16 @@ export function Panel() {
                       <span>Modelo</span>
                       <input className="pn-input" value={modeloIa} maxLength={80} onChange={(e) => setModeloIa(e.target.value)} />
                     </label>
+                    <label className="pn-interruptor">
+                      <input type="checkbox" checked={ia?.whisper !== false} onChange={(e) => void guardarClaveIa({ whisper: e.target.checked })} />
+                      <span className="pn-palanca" aria-hidden />
+                      <span>Entender mejor lo que digo (Whisper de Groq)</span>
+                    </label>
+                    <p className="pn-ayuda">
+                      Con esto el audio de lo que le decís a Nooby (después de despertarlo) se manda a Groq para transcribirlo con Whisper, que
+                      entiende mucho mejor que el reconocedor del celu. La palabra de despertar sigue siendo local. Si lo apagás, todo queda en
+                      el celu. Necesita la app del celu actualizada.
+                    </p>
                     <div className="pn-fila">
                       <button className="pn-btn primario" onClick={() => void guardarClaveIa({ clave: claveIa, modelo: modeloIa })}>
                         Guardar

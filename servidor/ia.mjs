@@ -232,3 +232,102 @@ export function limpiarRespuesta(t) {
     .trim()
     .slice(0, 600)
 }
+
+// ---------- oído: transcripción con Whisper (Groq) ----------
+// El celu manda el audio crudo de cada frase (PCM 16 kHz, 16 bits, mono). Se arma un WAV y se transcribe con Whisper, que entiende
+// mucho mejor que el reconocedor chico del celu. La palabra de despertar sigue siendo del celu (sin internet).
+export const URL_STT = 'https://api.groq.com/openai/v1/audio/transcriptions'
+export const MODELO_STT = 'whisper-large-v3-turbo'
+export const FRECUENCIA_PCM = 16000
+const MIN_PCM_BYTES = FRECUENCIA_PCM * 2 * 0.4 // menos de 0,4 s no es una frase
+const MAX_PCM_BYTES = FRECUENCIA_PCM * 2 * 40
+
+/** Encabezado WAV (44 bytes) + audio PCM 16 bits mono. */
+export function armarWav(pcm, frecuencia = FRECUENCIA_PCM) {
+  const h = Buffer.alloc(44)
+  h.write('RIFF', 0)
+  h.writeUInt32LE(36 + pcm.length, 4)
+  h.write('WAVEfmt ', 8)
+  h.writeUInt32LE(16, 16)
+  h.writeUInt16LE(1, 20) // PCM
+  h.writeUInt16LE(1, 22) // mono
+  h.writeUInt32LE(frecuencia, 24)
+  h.writeUInt32LE(frecuencia * 2, 28)
+  h.writeUInt16LE(2, 32)
+  h.writeUInt16LE(16, 34)
+  h.write('data', 36)
+  h.writeUInt32LE(pcm.length, 40)
+  return Buffer.concat([h, pcm])
+}
+
+/** Une los trozos (base64) que mandó el celu. null si no sirven (vacío, muy corto o demasiado largo). */
+export function juntarPcm(trozos) {
+  if (!Array.isArray(trozos) || trozos.length === 0 || trozos.length > 12) return null
+  const partes = []
+  let total = 0
+  for (const t of trozos) {
+    if (typeof t !== 'string' || !/^[A-Za-z0-9+/=\s]+$/.test(t)) return null
+    const b = Buffer.from(t, 'base64')
+    total += b.length
+    if (total > MAX_PCM_BYTES) return null
+    partes.push(b.subarray(0, b.length - (b.length % 2)))
+  }
+  const pcm = Buffer.concat(partes)
+  return pcm.length >= MIN_PCM_BYTES ? pcm : null
+}
+
+/** Whisper inventa frases típicas cuando hay silencio o ruido: se descartan. */
+const ALUCINACIONES = /(amara\.org|subt[ií]tulos|subtitulad|suscr[ií]b|gracias por ver|thanks for watching|no olvides suscribirte|hasta la pr[oó]xima|chau chau)/i
+
+/** Del JSON verbose de Whisper saca el texto, sin los tramos que probablemente son silencio. */
+export function limpiarTranscripcion(j) {
+  const segs = Array.isArray(j?.segments) ? j.segments : null
+  let texto
+  if (segs && segs.length > 0) {
+    texto = segs
+      .filter((s) => !(typeof s.no_speech_prob === 'number' && s.no_speech_prob > 0.6 && typeof s.avg_logprob === 'number' && s.avg_logprob < -0.7))
+      .map((s) => String(s.text ?? ''))
+      .join(' ')
+  } else texto = String(j?.text ?? '')
+  texto = texto.replace(/\s+/g, ' ').trim()
+  if (texto.length < 60 && ALUCINACIONES.test(texto)) return ''
+  return texto.slice(0, 600)
+}
+
+export async function transcribir({ clave, pcm, modelo = MODELO_STT, fetchFn = fetch }) {
+  if (!clave) throw new ErrorIA('sin_clave')
+  const f = new FormData()
+  f.append('file', new Blob([armarWav(pcm)], { type: 'audio/wav' }), 'frase.wav')
+  f.append('model', modelo)
+  f.append('language', 'es')
+  f.append('response_format', 'verbose_json')
+  f.append('temperature', '0')
+  f.append('prompt', 'Conversación en español rioplatense con un asistente llamado Nooby: temporizador, recordatorio, clima, impresoras.')
+  let r
+  try {
+    r = await fetchFn(process.env.NOOBY_STT_URL || URL_STT, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${clave}` },
+      body: f,
+      signal: AbortSignal.timeout(20_000),
+    })
+  } catch {
+    throw new ErrorIA('red', 'sin conexión con la API')
+  }
+  if (r.status === 401 || r.status === 403) throw new ErrorIA('clave')
+  if (r.status === 429) throw new ErrorIA('cupo')
+  if (!r.ok) {
+    let det = ''
+    try {
+      det = String(JSON.parse(await r.text())?.error?.message ?? '')
+    } catch {
+      /* sin cuerpo legible */
+    }
+    throw new ErrorIA('ia', `HTTP ${r.status} ${det}`.trim().slice(0, 300))
+  }
+  try {
+    return limpiarTranscripcion(await r.json())
+  } catch {
+    throw new ErrorIA('ia')
+  }
+}

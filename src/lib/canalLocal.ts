@@ -248,6 +248,8 @@ export interface InfoIA {
   /** La clave viene de la variable de entorno GROQ_API_KEY (no se puede borrar desde el panel). */
   entorno: boolean
   modelo: string
+  /** ¿Se usa Whisper (en la nube de Groq) para entender mejor lo que decís? */
+  whisper: boolean
 }
 
 export async function leerIA(): Promise<InfoIA> {
@@ -257,7 +259,7 @@ export async function leerIA(): Promise<InfoIA> {
 }
 
 /** Guarda la clave y/o el modelo (o borra la clave). El servidor nunca devuelve la clave. */
-export async function guardarIA(cambio: { clave?: string; modelo?: string; borrar?: boolean }): Promise<InfoIA> {
+export async function guardarIA(cambio: { clave?: string; modelo?: string; borrar?: boolean; whisper?: boolean }): Promise<InfoIA> {
   const r = await fetch('/api/ia', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
@@ -265,4 +267,16 @@ export async function guardarIA(cambio: { clave?: string; modelo?: string; borra
   })
   if (!r.ok) throw new Error(((await r.json().catch(() => null)) as { error?: string } | null)?.error ?? `el servidor respondió ${r.status}`)
   return r.json()
+}
+
+/** Audio de lo que dijiste (trozos PCM 16 kHz en base64, como los manda el APK) → texto de Whisper. Devuelve null si no se pudo. */
+export async function transcribirAudio(pcm: string[]): Promise<string | null> {
+  const r = await fetch('/api/transcribir', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ pcm }),
+  })
+  if (!r.ok) return null
+  const j = (await r.json()) as { texto?: string; error?: string }
+  return typeof j.texto === 'string' ? j.texto : null
 }

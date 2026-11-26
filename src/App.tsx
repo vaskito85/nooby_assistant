@@ -21,7 +21,7 @@ import { callar, desbloquear, hablar, sonar, type Sonido } from './lib/audio'
 import { frase, pedirClima, type Clima } from './lib/clima'
 import { escenaClima } from './lib/escenas'
 import { aplicarRemota, cargarAjustes, guardarAjustes, limpiarLlamadas, temaConfig, type Ajustes } from './lib/config'
-import { charlarIA, conectarLocal, estadoLocal, cancelarAgendaServidor, cancelarPedidoFoto, crearAgenda, guardarConfigLocal, leerAgenda, leerImpresoras, pedirFoto, urlFoto, type AgendaItem } from './lib/canalLocal'
+import { charlarIA, transcribirAudio, conectarLocal, estadoLocal, cancelarAgendaServidor, cancelarPedidoFoto, crearAgenda, guardarConfigLocal, leerAgenda, leerImpresoras, pedirFoto, urlFoto, type AgendaItem } from './lib/canalLocal'
 import { conectarNtfy } from './lib/ntfy'
 import { Presencia } from './lib/presencia'
 import { Sentado } from './lib/sentado'
@@ -148,6 +148,9 @@ export function App() {
   const timerVista = useRef<number | null>(null)
   const dialogoRef = useRef<Dialogo | null>(null)
   const bufferHabla = useRef('')
+  // Audio (PCM base64) de lo que se va diciendo, para que Whisper lo transcriba mejor que el reconocedor chico del celu.
+  const audioHabla = useRef<string[]>([])
+  const whisperApagadoHasta = useRef(0) // si falla (sin clave, sin internet, cupo) se deja de intentar un rato
   const timerFin = useRef<number | null>(null)
   const procesarAtentoRef = useRef<(t: string) => void>(() => {})
   const actividadPcRef = useRef<ActividadPc | null>(null)
@@ -1011,8 +1014,29 @@ export function App() {
     if (timerFin.current) window.clearTimeout(timerFin.current)
     timerFin.current = window.setTimeout(() => {
       const t = bufferHabla.current
+      const audio = audioHabla.current
       bufferHabla.current = ''
-      if (t) procesarAtentoRef.current(t)
+      audioHabla.current = []
+      if (!t) return
+      if (audio.length === 0 || Date.now() < whisperApagadoHasta.current) {
+        procesarAtentoRef.current(t)
+        return
+      }
+      // Con el audio, Whisper entiende mucho mejor que Vosk: si contesta se usa su texto; si no, el de Vosk.
+      void transcribirAudio(audio)
+        .then((w) => {
+          if (w) {
+            mostrarOyendo(w, true)
+            procesarAtentoRef.current(w)
+          } else {
+            whisperApagadoHasta.current = Date.now() + 60_000
+            procesarAtentoRef.current(t)
+          }
+        })
+        .catch(() => {
+          whisperApagadoHasta.current = Date.now() + 60_000
+          procesarAtentoRef.current(t)
+        })
     }, ESPERA_FIN_MS)
   }
 
@@ -1083,12 +1107,20 @@ export function App() {
       setHablando(false)
       if (oidoRef.current === 'atento') mantenerAtento() // la cuenta de espera arranca cuando termina de hablar
     }
+    // El APK nuevo manda el audio de cada frase justo antes de su texto. Solo se guarda mientras está atento.
+    const alAudio = (e: Event) => {
+      const pcm = (e as CustomEvent<{ pcm?: string }>).detail?.pcm
+      if (typeof pcm !== 'string' || oidoRef.current !== 'atento' || entrenandoRef.current || avisoRef.current?.sonido === 'alarma') return
+      audioHabla.current = [...audioHabla.current, pcm].slice(-8)
+    }
     window.addEventListener('nooby-oyo', alOyo)
+    window.addEventListener('nooby-audio', alAudio)
     window.addEventListener('nooby-oido-listo', alListo)
     window.addEventListener('nooby-oido-error', alError)
     window.addEventListener('nooby-hablo-fin', alFinHabla)
     return () => {
       window.removeEventListener('nooby-oyo', alOyo)
+      window.removeEventListener('nooby-audio', alAudio)
       window.removeEventListener('nooby-oido-listo', alListo)
       window.removeEventListener('nooby-oido-error', alError)
       window.removeEventListener('nooby-hablo-fin', alFinHabla)

@@ -13,7 +13,7 @@ import { extname, join, normalize, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { GET as pedirCiudad } from '../api/ciudad.js'
 import { GET as pedirClima } from '../api/clima.js'
-import { charlar, describirCodigo, ErrorIA, ERRORES, limpiarMensajes, MODELO_POR_DEFECTO, MODELOS_RETIRADOS } from './ia.mjs'
+import { charlar, describirCodigo, ErrorIA, ERRORES, limpiarMensajes, MODELO_POR_DEFECTO, MODELOS_RETIRADOS, juntarPcm, transcribir } from './ia.mjs'
 
 const RAIZ = fileURLToPath(new URL('..', import.meta.url))
 const WEB = join(RAIZ, 'dist')
@@ -34,7 +34,7 @@ const porDefecto = {
     autoabrir: true,
     ntfy: { servidor: 'https://ntfy.sh', tema: '' },
     /** Charla libre con IA (Groq). La clave vive solo acá: nunca se manda al celu ni a /api/config. */
-    ia: { clave: '', modelo: MODELO_POR_DEFECTO },
+    ia: { clave: '', modelo: MODELO_POR_DEFECTO, whisper: true },
   },
 }
 
@@ -309,6 +309,15 @@ function cupoLocalIA() {
   return true
 }
 const horaLocal = (ms) => new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeStyle: 'short', hour12: false }).format(ms)
+
+const llamadasSTT = [] // transcripciones por minuto (máximo 15: el plan gratis de Groq tiene su propio tope)
+function cupoLocalSTT() {
+  const t = Date.now()
+  while (llamadasSTT.length > 0 && t - llamadasSTT[0] > 60_000) llamadasSTT.shift()
+  if (llamadasSTT.length >= 15) return false
+  llamadasSTT.push(t)
+  return true
+}
 
 function agregarAgenda(c) {
   if (pendientesAgenda().length >= AGENDA_MAX) throw new Error('hay demasiadas cosas pendientes')
@@ -697,7 +706,7 @@ async function manejar(req, res) {
 
   if (ruta === '/api/ia') {
     // Nunca devuelve la clave: solo si hay una y qué modelo se usa.
-    if (req.method === 'GET') return json(res, 200, { configurada: Boolean(claveIA()), entorno: Boolean(process.env.GROQ_API_KEY), modelo: estado.servidor.ia.modelo })
+    if (req.method === 'GET') return json(res, 200, { configurada: Boolean(claveIA()), entorno: Boolean(process.env.GROQ_API_KEY), modelo: estado.servidor.ia.modelo, whisper: estado.servidor.ia.whisper !== false })
     if (req.method === 'PUT') {
       if (!String(req.headers['content-type']).includes('application/json')) return json(res, 415, { error: 'usá application/json' })
       try {
@@ -711,11 +720,35 @@ async function manejar(req, res) {
           if (!MODELO_OK.test(c.modelo.trim())) return json(res, 400, { error: 'modelo inválido' })
           estado.servidor.ia.modelo = c.modelo.trim()
         }
+        if (typeof c.whisper === 'boolean') estado.servidor.ia.whisper = c.whisper
         guardar()
-        return json(res, 200, { configurada: Boolean(claveIA()), entorno: Boolean(process.env.GROQ_API_KEY), modelo: estado.servidor.ia.modelo })
+        return json(res, 200, { configurada: Boolean(claveIA()), entorno: Boolean(process.env.GROQ_API_KEY), modelo: estado.servidor.ia.modelo, whisper: estado.servidor.ia.whisper !== false })
       } catch {
         return json(res, 400, { error: 'JSON inválido' })
       }
+    }
+  }
+
+  if (ruta === '/api/transcribir' && req.method === 'POST') {
+    // La cara manda el audio de lo que dijiste (trozos PCM en base64) y recibe el texto que entendió Whisper. Solo por localhost.
+    if (!String(req.headers['content-type']).includes('application/json')) return json(res, 415, { error: 'usá application/json' })
+    let c
+    try {
+      c = JSON.parse(await leerCuerpo(req, 4_000_000))
+    } catch {
+      return json(res, 400, { error: 'JSON inválido o demasiado grande' })
+    }
+    const pcm = juntarPcm(c.pcm)
+    if (!pcm) return json(res, 400, { error: 'audio inválido (de 0,4 a 40 s, PCM 16 kHz en base64)' })
+    if (!claveIA()) return json(res, 200, { error: 'sin_clave' })
+    if (estado.servidor.ia.whisper === false) return json(res, 200, { error: 'apagado' })
+    if (!cupoLocalSTT()) return json(res, 200, { error: 'cupo' })
+    try {
+      return json(res, 200, { texto: await transcribir({ clave: claveIA(), pcm }) })
+    } catch (e) {
+      const tipo = e instanceof ErrorIA ? e.tipo : 'ia'
+      console.log(`[stt] ${tipo}${e instanceof ErrorIA && e.detalle ? ': ' + e.detalle : ''}`)
+      return json(res, 200, { error: tipo })
     }
   }
 

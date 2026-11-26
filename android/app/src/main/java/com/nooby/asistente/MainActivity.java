@@ -4,10 +4,14 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Base64;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.view.View;
@@ -25,11 +29,11 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.vosk.Model;
 import org.vosk.Recognizer;
-import org.vosk.android.RecognitionListener;
-import org.vosk.android.SpeechService;
 import org.vosk.android.StorageService;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -73,7 +77,7 @@ public class MainActivity extends Activity {
     private String gramaticaLlamado =
             "[\"che nube\", \"che nubes\", \"che nuevo\", \"nube\", \"nubes\", \"[unk]\"]";
     private Model modelo;
-    private SpeechService servicioVoz;
+    private Oyente servicioVoz;
     private Recognizer recActual;
     private String modoOido = "llamado";
     private boolean oidoPausado = false;
@@ -199,15 +203,9 @@ public class MainActivity extends Activity {
                     ? new Recognizer(modelo, FRECUENCIA, gramaticaLlamado)
                     : new Recognizer(modelo, FRECUENCIA);
             recActual = rec;
-            servicioVoz = new SpeechService(rec, FRECUENCIA);
-            servicioVoz.startListening(new RecognitionListener() {
-                @Override public void onPartialResult(String h) { enviarOido(h); }
-                @Override public void onResult(String h) { enviarOido(h); }
-                @Override public void onFinalResult(String h) { /* solo al detener: ya se envió en onResult */ }
-                @Override public void onError(Exception e) { avisarJs("nooby-oido-error", "Reconocedor: " + e.getMessage()); }
-                @Override public void onTimeout() { }
-            });
-            servicioVoz.setPause(oidoPausado); // si justo estaba hablando, el nuevo reconocedor arranca en pausa
+            // En modo "libre" además se guarda el audio de cada frase para que la web lo transcriba mejor (Whisper).
+            servicioVoz = new Oyente(rec, oidoPausado, !"llamado".equals(modoOido)); // si justo estaba hablando, arranca en pausa
+            servicioVoz.start();
             avisarJs("nooby-oido-listo", modoOido);
         } catch (IOException e) {
             avisarJs("nooby-oido-error", "No pude iniciar el reconocedor: " + e.getMessage());
@@ -217,7 +215,7 @@ public class MainActivity extends Activity {
     /** Mientras Nooby habla se deja de escuchar (si no, se oiría a sí mismo). */
     private void pausarOido(boolean pausa) {
         oidoPausado = pausa;
-        if (servicioVoz != null) servicioVoz.setPause(pausa);
+        if (servicioVoz != null) servicioVoz.pausar(pausa);
     }
 
     /** Cambia entre esperar "che nooby" ("llamado") y entender lo que se pide ("libre"). */
@@ -231,8 +229,7 @@ public class MainActivity extends Activity {
         if (modo.equals(modoOido) && !reiniciarPorGramatica) return;
         modoOido = modo;
         if (modelo == null || servicioVoz == null) return; // todavía no arrancó: arrancará ya en este modo
-        servicioVoz.stop();
-        servicioVoz.shutdown();
+        servicioVoz.detener();
         servicioVoz = null;
         final Recognizer vieja = recActual;
         recActual = null;
@@ -256,6 +253,131 @@ public class MainActivity extends Activity {
     private void avisarJs(String evento, String mensaje) {
         web.evaluateJavascript(
                 "window.dispatchEvent(new CustomEvent('" + evento + "',{detail:" + JSONObject.quote(mensaje) + "}))", null);
+    }
+
+    /** Pasa a la web el audio crudo (PCM 16 kHz, 16 bits, mono) de la frase que se acaba de terminar. */
+    private void enviarAudio(final byte[] pcm) {
+        final String b64 = Base64.encodeToString(pcm, Base64.NO_WRAP);
+        final long ms = pcm.length / 32; // 16000 muestras/s * 2 bytes = 32 bytes por ms
+        ui.post(() -> web.evaluateJavascript(
+                "window.dispatchEvent(new CustomEvent('nooby-audio',{detail:{ms:" + ms + ",pcm:'" + b64 + "'}}))", null));
+    }
+
+    /**
+     * Micrófono propio (reemplaza al SpeechService de Vosk, que no deja sacar el audio): lee el micrófono, se lo da a Vosk y,
+     * si capturar es true, guarda el audio de cada frase y lo manda a la web junto con el texto.
+     */
+    private class Oyente extends Thread {
+        private static final int MAX_FRASE_BYTES = 16000 * 2 * 25; // una frase de más de 25 s no se guarda
+        private final Recognizer rec;
+        private final boolean capturar;
+        private volatile boolean pausa;
+        private volatile boolean terminar = false;
+        private final ByteArrayOutputStream frase = new ByteArrayOutputStream();
+        private final ArrayDeque<byte[]> previo = new ArrayDeque<>(); // un poquito de audio de antes de que empiece a oír
+        private boolean grabando = false;
+
+        Oyente(Recognizer rec, boolean pausaInicial, boolean capturar) {
+            this.rec = rec;
+            this.pausa = pausaInicial;
+            this.capturar = capturar;
+            setName("nooby-oido");
+        }
+
+        void pausar(boolean p) {
+            pausa = p;
+        }
+
+        void detener() {
+            terminar = true;
+        }
+
+        private void olvidarFrase() {
+            frase.reset();
+            previo.clear();
+            grabando = false;
+        }
+
+        @Override
+        public void run() {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO);
+            int minimo = AudioRecord.getMinBufferSize((int) FRECUENCIA, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+            AudioRecord grabador = null;
+            try {
+                grabador = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, (int) FRECUENCIA,
+                        AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(minimo, 32000));
+                if (grabador.getState() != AudioRecord.STATE_INITIALIZED) {
+                    avisarEnUi("nooby-oido-error", "No pude abrir el micrófono");
+                    return;
+                }
+                grabador.startRecording();
+                short[] buf = new short[2048]; // unos 128 ms
+                while (!terminar) {
+                    int n = grabador.read(buf, 0, buf.length);
+                    if (n < 0) {
+                        avisarEnUi("nooby-oido-error", "Error del micrófono (" + n + ")");
+                        break;
+                    }
+                    if (n == 0) continue;
+                    if (pausa) { // mientras Nooby habla no se escucha (se oiría a sí mismo)
+                        if (grabando || previo.size() > 0) olvidarFrase();
+                        continue;
+                    }
+                    boolean listo = rec.acceptWaveForm(buf, n);
+                    String json = listo ? rec.getResult() : rec.getPartialResult();
+                    String texto = textoDe(json);
+                    if (capturar) {
+                        byte[] bytes = new byte[n * 2];
+                        for (int i = 0; i < n; i++) {
+                            bytes[2 * i] = (byte) (buf[i] & 0xff);
+                            bytes[2 * i + 1] = (byte) ((buf[i] >> 8) & 0xff);
+                        }
+                        if (!grabando && !texto.isEmpty()) {
+                            grabando = true;
+                            for (byte[] p : previo) frase.write(p, 0, p.length);
+                            previo.clear();
+                        }
+                        if (grabando) {
+                            if (frase.size() < MAX_FRASE_BYTES) frase.write(bytes, 0, bytes.length);
+                        } else {
+                            previo.addLast(bytes);
+                            if (previo.size() > 3) previo.removeFirst();
+                        }
+                        if (listo && !texto.isEmpty() && grabando && frase.size() < MAX_FRASE_BYTES) enviarAudio(frase.toByteArray());
+                    }
+                    if (!texto.isEmpty()) enviarOidoEnUi(json);
+                    if (listo) olvidarFrase();
+                }
+            } catch (Exception e) {
+                avisarEnUi("nooby-oido-error", "Reconocedor: " + e.getMessage());
+            } finally {
+                if (grabador != null) {
+                    try {
+                        grabador.stop();
+                    } catch (Exception ignorado) {
+                        // ya estaba detenido
+                    }
+                    grabador.release();
+                }
+            }
+        }
+
+        private String textoDe(String json) {
+            try {
+                JSONObject o = new JSONObject(json);
+                return o.optString("text", o.optString("partial", ""));
+            } catch (JSONException e) {
+                return "";
+            }
+        }
+
+        private void enviarOidoEnUi(final String json) {
+            ui.post(() -> enviarOido(json));
+        }
+
+        private void avisarEnUi(final String evento, final String mensaje) {
+            ui.post(() -> avisarJs(evento, mensaje));
+        }
     }
 
     // ---------- voz (hablar) ----------
@@ -347,10 +469,10 @@ public class MainActivity extends Activity {
             });
         }
 
-        /** Versión de este puente: 2 = modoOido(modo, gramatica) y entrenamiento de la frase de despertar. */
+        /** Versión de este puente: 2 = modoOido(modo, gramatica) y entrenamiento; 3 = además manda el audio de cada frase (nooby-audio). */
         @JavascriptInterface
         public int apiVersion() {
-            return 2;
+            return 3;
         }
 
         @JavascriptInterface
@@ -406,8 +528,12 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         ui.removeCallbacks(reanudarOido);
         if (servicioVoz != null) {
-            servicioVoz.stop();
-            servicioVoz.shutdown();
+            servicioVoz.detener();
+            try {
+                servicioVoz.join(800); // que el hilo de audio termine antes de cerrar el reconocedor
+            } catch (InterruptedException ignorado) {
+                Thread.currentThread().interrupt();
+            }
         }
         if (recActual != null) recActual.close();
         if (modelo != null) modelo.close();
