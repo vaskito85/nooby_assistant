@@ -1,0 +1,61 @@
+name: Release
+
+# Al subir una etiqueta "v*" (ej. v0.2.0) compila el APK y el paquete de la PC y los publica en una Release.
+# Los nombres de los archivos son fijos para que el instalador use releases/latest/download/<nombre>.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Compilar la web
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Compilar el APK
+        working-directory: android
+        run: gradle --no-daemon assembleDebug
+
+      - name: Armar el paquete de la PC
+        run: |
+          mkdir -p paquete/servidor paquete/api
+          cp servidor/servidor.mjs paquete/servidor/
+          cp api/*.js paquete/api/
+          cp -r dist paquete/dist
+          echo '{ "name": "nooby", "private": true, "type": "module" }' > paquete/package.json
+          (cd paquete && zip -qr ../nooby-pc.zip .)
+          cp android/app/build/outputs/apk/debug/app-debug.apk nooby.apk
+          sha256sum nooby-pc.zip nooby.apk > checksums.txt
+          cat checksums.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            nooby-pc.zip
+            nooby.apk
+            checksums.txt
+          generate_release_notes: true

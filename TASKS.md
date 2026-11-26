@@ -13,7 +13,7 @@
 
 ## Pendiente
 - [ ] T012 Probar el APK en el Note 8 (instalar, cámara, reverse, arranque automático)
-- [ ] T013 Arrancar el servidor con Windows (inicio automático) y/o ícono de bandeja
+- [x] T013 Instalador de una línea + inicio con Windows + Release automática (falta ícono de bandeja)
 - [ ] T014 Enganchar el agente del taller: POST a /api/aviso (o ntfy + puente)
 - [ ] T006 Probar en el celu real (cámara, rendimiento, audio, pantalla encendida) y ajustar
 - [ ] T007 Desplegar en Vercel (HTTPS, necesario para la cámara en el celu) y agregar a pantalla de inicio
