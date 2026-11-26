@@ -1,7 +1,20 @@
 # nooby_asistente — asistente personal con cara para un celu viejo
 
-Web app de una pantalla (Vite + React + TS, sin backend) que se abre a pantalla completa en un celu viejo.
-**Proyecto independiente**: no depende de `suite_impresion_3D`; los avisos le llegan por ntfy.
+Web app de una pantalla (Vite + React + TS) que se muestra en un celu viejo (Galaxy Note 8, Android 9).
+**Proyecto independiente**: no depende de `suite_impresion_3D`; los avisos le llegan por el servidor local (USB) o por ntfy.
+
+## Arquitectura (modo principal: USB)
+```
+ PC: servidor/servidor.mjs (Node, sin deps) :8777   ⇄  cable USB (adb reverse)  ⇄  celu: APK Nooby (WebView → http://127.0.0.1:8777)
+   - sirve dist/ (la web) y el panel (/#/panel)
+   - /api/config (GET/PUT), /api/eventos (SSE: config + aviso), /api/aviso (POST JSON), /api/estado, /api/clima, /api/ciudad
+   - mantiene `adb reverse tcp:8777 tcp:8777` y abre la app al enchufar el celu
+   - opcional: puente desde un tema de ntfy (avisos desde la Raspberry)
+```
+- Config del servidor: `~/.nooby/config.json` (puerto, escuchar, token, adb, ntfy). Variables: NOOBY_PUERTO, NOOBY_ADB, NOOBY_CARPETA.
+- Si la web NO la sirve ese servidor (ej. Vercel), la app cae al modo ntfy (`lib/ntfy.ts`, tema secreto por link).
+- El APK (`android/`, Java, sin dependencias) solo es la cáscara: pantalla completa, cámara, no apagar pantalla, reintento si la PC no está.
+  Se compila en GitHub Actions (`.github/workflows/apk.yml`; no hay Java/SDK local). UA incluye "NoobyApp" → la web arranca sola.
 
 ## Qué hace
 - Cara animada (ojos que parpadean, humores: normal, feliz, dormido, alerta, hablando).
@@ -17,6 +30,8 @@ Web app de una pantalla (Vite + React + TS, sin backend) que se abre a pantalla 
 
 ## Comandos
 ```
+npm run pc       # compila la web y levanta el servidor local (lo que se usa a diario)
+npm run servidor # solo el servidor (usa dist/ ya compilado)
 npm run dev      # http://localhost:5173 (la cámara exige https o localhost)
 npm test         # vitest (lib/sentado)
 npm run build    # tsc --noEmit && vite build
@@ -26,7 +41,9 @@ npm run build    # tsc --noEmit && vite build
 ```
 src/App.tsx        orquesta: inicio por toque, bucle de presencia, ntfy, botones, ajustes
 src/Cara.tsx       la cara (CSS en estilos.css, data-humor)
-src/lib/           sentado.ts (contador), presencia.ts (MediaPipe), ntfy.ts, clima.ts, audio.ts, config.ts (localStorage)
+servidor/          servidor.mjs (servidor local de la PC)
+android/           cáscara APK (Gradle, Java)
+src/lib/           canalLocal.ts (canal USB), sentado.ts (contador), presencia.ts (MediaPipe), ntfy.ts, clima.ts, audio.ts, config.ts (localStorage)
 public/models/     blaze_face_short_range.tflite (modelo de MediaPipe, versionado)
 public/mediapipe/  WASM copiado de node_modules por scripts/copiar-wasm.mjs (postinstall; no se versiona)
 ```

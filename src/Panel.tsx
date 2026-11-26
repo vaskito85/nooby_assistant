@@ -1,7 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { BuscadorCiudad } from './BuscadorCiudad'
-import { aRemota, cargarPanel, guardarPanel, porDefecto, temaConfig, type Ajustes } from './lib/config'
+import {
+  avisoLocal,
+  estadoLocal,
+  guardarConfigLocal,
+  leerConfigLocal,
+  type EstadoServidor,
+} from './lib/canalLocal'
 import type { Ciudad } from './lib/clima'
+import { aRemota, aplicarRemota, cargarPanel, guardarPanel, porDefecto, temaConfig, type Ajustes } from './lib/config'
 import { enviarNtfy } from './lib/ntfy'
 
 function temaNuevo() {
@@ -10,8 +17,14 @@ function temaNuevo() {
   return 'nooby-' + [...b].map((x) => x.toString(36).padStart(2, '0')).join('')
 }
 
-/** Panel de ajustes: se abre en la PC (`/#/panel`). El celu solo recibe lo que se guarda acá. */
+/**
+ * Panel de ajustes (`/#/panel`). Se abre en la PC. Hay dos modos:
+ *  - local: lo sirve el servidor de la PC (USB). Guarda ahí y el celu lo recibe por el cable.
+ *  - ntfy: versión de Vercel. Publica la config en ntfy y el celu la toma por internet.
+ */
 export function Panel() {
+  const [modo, setModo] = useState<'detectando' | 'local' | 'ntfy'>('detectando')
+  const [servidor, setServidor] = useState<EstadoServidor | null>(null)
   const [a, setA] = useState<Ajustes>(() => {
     const p = cargarPanel()
     if (!p.tema) p.tema = temaNuevo()
@@ -21,25 +34,50 @@ export function Panel() {
   const [estado, setEstado] = useState('')
   const [copiado, setCopiado] = useState(false)
 
-  const cambiar = <K extends keyof Ajustes>(k: K, v: Ajustes[K]) => {
-    const n = { ...a, [k]: v }
-    setA(n)
-    guardarPanel(n)
-    setEstado('Hay cambios sin enviar al celu.')
-  }
+  // Detecta el modo y, si es local, trae la config guardada en la PC.
+  useEffect(() => {
+    let vivo = true
+    const mirar = async () => {
+      const e = await estadoLocal()
+      if (!vivo) return
+      setServidor(e)
+      setModo((m) => (m === 'detectando' ? (e ? 'local' : 'ntfy') : m))
+      return e
+    }
+    void mirar().then(async (e) => {
+      if (!e || !vivo) return
+      try {
+        const cfg = await leerConfigLocal()
+        if (vivo) setA((prev) => aplicarRemota(prev, cfg))
+      } catch {
+        /* queda la local */
+      }
+    })
+    const id = window.setInterval(() => void mirar(), 3000) // estado del cable
+    return () => {
+      vivo = false
+      window.clearInterval(id)
+    }
+  }, [])
 
-  const elegirCiudad = (c: Ciudad) => {
-    const n = { ...a, ciudad: c.nombre, lat: c.lat, lon: c.lon }
+  const marcar = (n: Ajustes) => {
     setA(n)
     guardarPanel(n)
     setEstado('Hay cambios sin enviar al celu.')
   }
+  const cambiar = <K extends keyof Ajustes>(k: K, v: Ajustes[K]) => marcar({ ...a, [k]: v })
+  const elegirCiudad = (c: Ciudad) => marcar({ ...a, ciudad: c.nombre, lat: c.lat, lon: c.lon })
 
   const enviar = async () => {
     setEstado('Enviando…')
     try {
-      await enviarNtfy(a.servidor, temaConfig(a.tema), JSON.stringify(aRemota(a)))
-      setEstado('Enviado ✓ El celu lo toma al instante (si está abierto) o la próxima vez que se conecte.')
+      if (modo === 'local') {
+        await guardarConfigLocal(aRemota(a))
+        setEstado('Guardado ✓ El celu lo toma al instante.')
+      } else {
+        await enviarNtfy(a.servidor, temaConfig(a.tema), JSON.stringify(aRemota(a)))
+        setEstado('Enviado ✓ El celu lo toma al instante (si está abierto) o la próxima vez que se conecte.')
+      }
     } catch (e) {
       setEstado(`No pude enviar: ${e instanceof Error ? e.message : 'error'}`)
     }
@@ -47,7 +85,8 @@ export function Panel() {
 
   const probar = async () => {
     try {
-      await enviarNtfy(a.servidor, a.tema, 'Che, la impresión terminó')
+      if (modo === 'local') await avisoLocal('Che, la impresión terminó')
+      else await enviarNtfy(a.servidor, a.tema, 'Che, la impresión terminó')
       setEstado('Aviso de prueba enviado: tiene que sonar en el celu.')
     } catch (e) {
       setEstado(`No pude enviar la prueba: ${e instanceof Error ? e.message : 'error'}`)
@@ -71,19 +110,42 @@ export function Panel() {
         Los ajustes se hacen acá, en la PC. El celu solo los recibe: no tiene que tocar nada.
       </p>
 
-      <section className="ajustes">
-        <h2>1. Conectar el celu</h2>
-        <p className="chico">
-          Abrí este link <strong>una sola vez</strong> en el celu. Guarda el tema y desde ahí queda todo conectado.
-        </p>
-        <input readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
-        <button className="boton" onClick={copiar}>
-          {copiado ? 'Copiado ✓' : 'Copiar link'}
-        </button>
-        <p className="chico">
-          El link contiene el tema secreto: quien lo tenga puede mandarle avisos al celu. No lo publiques.
-        </p>
-      </section>
+      {modo === 'local' ? (
+        <section className="ajustes">
+          <h2>1. El celu</h2>
+          {servidor && servidor.celus.length > 0 ? (
+            <p>
+              ✓ Celu conectado por USB ({servidor.celus.join(', ')}).{' '}
+              {servidor.pantallas > 0 ? 'La cara está abierta.' : 'Abrí la app Nooby en el celu.'}
+            </p>
+          ) : (
+            <p>
+              Sin celu por USB. Enchufalo con el cable y activá la <strong>depuración USB</strong> (Opciones de
+              desarrollador). Aparece solo cuando lo conectás.
+            </p>
+          )}
+          <p className="chico">
+            Los avisos de impresión van a <code>POST http://127.0.0.1:{servidor?.puerto}/api/aviso</code> con JSON{' '}
+            <code>{'{"texto":"..."}'}</code>.
+          </p>
+        </section>
+      ) : (
+        modo === 'ntfy' && (
+          <section className="ajustes">
+            <h2>1. Conectar el celu</h2>
+            <p className="chico">
+              Abrí este link <strong>una sola vez</strong> en el celu. Guarda el tema y desde ahí queda todo conectado.
+            </p>
+            <input readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
+            <button className="boton" onClick={copiar}>
+              {copiado ? 'Copiado ✓' : 'Copiar link'}
+            </button>
+            <p className="chico">
+              El link contiene el tema secreto: quien lo tenga puede mandarle avisos al celu. No lo publiques.
+            </p>
+          </section>
+        )
+      )}
 
       <section className="ajustes">
         <h2>2. Ajustes</h2>
@@ -111,24 +173,28 @@ export function Panel() {
           Hablar en voz alta
         </label>
         <button className="boton principal" onClick={enviar}>
-          Enviar al celu
+          {modo === 'local' ? 'Guardar y enviar al celu' : 'Enviar al celu'}
         </button>
         {estado && <p className="chico">{estado}</p>}
       </section>
 
       <details className="ajustes">
         <summary>Avanzado y pruebas</summary>
-        <label>
-          Servidor ntfy
-          <input value={a.servidor} onChange={(e) => cambiar('servidor', e.target.value.trim())} />
-        </label>
-        <label>
-          Tema secreto
-          <input value={a.tema} onChange={(e) => cambiar('tema', e.target.value.trim())} />
-        </label>
-        <button className="boton" onClick={() => cambiar('tema', temaNuevo())}>
-          Generar tema nuevo (hay que volver a abrir el link en el celu)
-        </button>
+        {modo === 'ntfy' && (
+          <>
+            <label>
+              Servidor ntfy
+              <input value={a.servidor} onChange={(e) => cambiar('servidor', e.target.value.trim())} />
+            </label>
+            <label>
+              Tema secreto
+              <input value={a.tema} onChange={(e) => cambiar('tema', e.target.value.trim())} />
+            </label>
+            <button className="boton" onClick={() => cambiar('tema', temaNuevo())}>
+              Generar tema nuevo (hay que volver a abrir el link en el celu)
+            </button>
+          </>
+        )}
         <button className="boton" onClick={probar}>
           Probar aviso de impresión en el celu
         </button>

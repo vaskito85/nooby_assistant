@@ -11,3 +11,9 @@ npm run dev
 Abrí la página en el celu (la cámara necesita HTTPS o localhost), tocá la cara y dejá el celu parado.
 En **Ajustes** cargás el tema de ntfy. Para que lleguen avisos: `POST https://ntfy.sh/<tu-tema>` con el texto en el cuerpo.
 Detalles en `CLAUDE.md`.
+
+## Uso por USB (Note 8)
+1. En el celu: Opciones de desarrollador → **Depuración USB**. Instalá el APK (ver `scripts/instalar-apk.ps1`).
+2. En la PC: `npm install` y `npm run pc`. Abrí el panel en http://127.0.0.1:8777/#/panel.
+3. Enchufá el celu por USB: el servidor comparte el puerto y abre Nooby solo.
+4. Avisos desde cualquier programa de la PC: `POST http://127.0.0.1:8777/api/aviso` con `{"texto":"Che, la impresión terminó"}` (Content-Type: application/json).

@@ -8,7 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
     "test": "vitest run",
-    "postinstall": "node scripts/copiar-wasm.mjs"
+    "postinstall": "node scripts/copiar-wasm.mjs",
+    "servidor": "node servidor/servidor.mjs",
+    "pc": "npm run build && node servidor/servidor.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.2.3",

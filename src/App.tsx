@@ -3,6 +3,7 @@ import { Cara, type Humor, type Mirada } from './Cara'
 import { desbloquear, hablar, sonar, type Sonido } from './lib/audio'
 import { frase, pedirClima } from './lib/clima'
 import { aplicarRemota, cargarAjustes, guardarAjustes, temaConfig, type Ajustes } from './lib/config'
+import { conectarLocal, estadoLocal } from './lib/canalLocal'
 import { conectarNtfy } from './lib/ntfy'
 import { Presencia } from './lib/presencia'
 import { Sentado } from './lib/sentado'
@@ -43,6 +44,7 @@ export function App() {
   const [miradaCara, setMiradaCara] = useState<Mirada | null>(null)
   const [miradaDedo, setMiradaDedo] = useState<Mirada | null>(null)
   const [ntfyOk, setNtfyOk] = useState<boolean | null>(null)
+  const [modo, setModo] = useState<'detectando' | 'local' | 'ntfy'>('detectando')
   const [nota, setNota] = useState('')
 
   // Los ajustes cambian desde la PC; los timers leen siempre el valor vigente por ref.
@@ -176,8 +178,39 @@ export function App() {
     return () => window.clearInterval(id)
   }, [fase, conCamara, lanzarAviso])
 
+  // ¿Me sirve el servidor de la PC (USB)? Si sí, todo va por ahí; si no (Vercel), por ntfy.
+  useEffect(() => {
+    let vivo = true
+    void estadoLocal().then((e) => vivo && setModo(e ? 'local' : 'ntfy'))
+    return () => {
+      vivo = false
+    }
+  }, [])
+
+  // Canal local: avisos y ajustes llegan por el cable desde el servidor de la PC.
+  useEffect(() => {
+    if (modo !== 'local') return
+    return conectarLocal(
+      (texto) => lanzarAviso(texto, 'alarma', true),
+      (cfg) => {
+        const nuevo = aplicarRemota(ajustesRef.current, cfg)
+        guardarAjustes(nuevo)
+        setAjustes(nuevo)
+      },
+      setNtfyOk,
+    )
+  }, [modo, lanzarAviso])
+
+  // Dentro del APK no hay nadie que toque "despertar": arranca solo.
+  useEffect(() => {
+    if (modo === 'detectando' || fase !== 'inicio') return
+    if (/NoobyApp/.test(navigator.userAgent)) void empezar()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modo])
+
   // Avisos que llegan de afuera (la impresión, lo que quieras) por ntfy.
   useEffect(() => {
+    if (modo !== 'ntfy') return
     if (fase !== 'activo' || !ajustes.tema) {
       setNtfyOk(null)
       return
@@ -188,11 +221,11 @@ export function App() {
       (m) => lanzarAviso(m.mensaje, 'alarma', true),
       setNtfyOk,
     )
-  }, [fase, ajustes.servidor, ajustes.tema, lanzarAviso])
+  }, [modo, fase, ajustes.servidor, ajustes.tema, lanzarAviso])
 
-  // Ajustes que llegan del panel de la PC. Al conectar entrega el último guardado.
+  // Ajustes que llegan del panel de la PC por ntfy. Al conectar entrega el último guardado.
   useEffect(() => {
-    if (!ajustes.tema) return
+    if (modo !== 'ntfy' || !ajustes.tema) return
     return conectarNtfy(
       ajustes.servidor,
       temaConfig(ajustes.tema),
@@ -208,7 +241,7 @@ export function App() {
       () => {},
       true,
     )
-  }, [ajustes.servidor, ajustes.tema])
+  }, [modo, ajustes.servidor, ajustes.tema])
 
   useEffect(() => () => presencia.current?.detener(), [])
 
@@ -275,7 +308,7 @@ export function App() {
         <button className="inicio" onClick={empezar}>
           <Cara humor="normal" mirada={null} />
           <span className="inicio-texto">Tocá para despertar a Nooby</span>
-          {ajustes.tema ? (
+          {modo === 'local' || ajustes.tema ? (
             <small>Va a pedir permiso para la cámara. El video no sale del celu.</small>
           ) : (
             <small>
@@ -326,7 +359,15 @@ export function App() {
           </nav>
 
           <p className="chico pie">
-            {ntfyOk === null ? 'Sin tema: falta conectar con la PC' : ntfyOk ? 'Conectado ✓' : 'Sin conexión con ntfy'}
+            {modo === 'local'
+              ? ntfyOk
+                ? 'Conectado a la PC ✓'
+                : 'Esperando a la PC…'
+              : ntfyOk === null
+                ? 'Sin tema: falta conectar con la PC'
+                : ntfyOk
+                  ? 'Conectado ✓'
+                  : 'Sin conexión con ntfy'}
           </p>
         </>
       )}

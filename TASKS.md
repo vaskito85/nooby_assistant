@@ -7,7 +7,14 @@
 - [x] T004 Avisos por ntfy con alarma, voz y mensaje
 - [x] T005 Botón de clima, recordatorio de agua, ajustes plegables
 
+## Hecho (v0.2)
+- [x] Servidor local en la PC + canal USB (adb reverse) + panel en modo local
+- [x] Proyecto APK (cáscara WebView) y workflow de build en GitHub Actions
+
 ## Pendiente
+- [ ] T012 Probar el APK en el Note 8 (instalar, cámara, reverse, arranque automático)
+- [ ] T013 Arrancar el servidor con Windows (inicio automático) y/o ícono de bandeja
+- [ ] T014 Enganchar el agente del taller: POST a /api/aviso (o ntfy + puente)
 - [ ] T006 Probar en el celu real (cámara, rendimiento, audio, pantalla encendida) y ajustar
 - [ ] T007 Desplegar en Vercel (HTTPS, necesario para la cámara en el celu) y agregar a pantalla de inicio
 - [ ] T008 Elegir ntfy público con tema secreto o ntfy propio en la Raspberry

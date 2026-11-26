@@ -10,3 +10,9 @@ certs/
 .vercel
 # wasm de MediaPipe: se copia solo desde node_modules (scripts/copiar-wasm.mjs)
 public/mediapipe/
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
