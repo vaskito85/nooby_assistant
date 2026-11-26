@@ -685,3 +685,22 @@ body {
 .panel-imp .pista {
   margin: 0;
 }
+
+/* con foto: la foto ocupa el espacio que sobra (se achica sola si la pantalla es baja) */
+.panel-imp.con-foto {
+  height: 100%;
+  gap: 8px;
+}
+.panel-imp.con-foto .titulo {
+  font-size: clamp(1rem, 3.4vmin, 1.5rem);
+  -webkit-line-clamp: 2;
+}
+.foto-imp {
+  width: 100%;
+  flex: 1 1 0;
+  min-height: 70px;
+  object-fit: cover;
+  border: 1px solid var(--borde);
+  border-radius: 12px;
+  background: var(--panel);
+}

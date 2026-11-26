@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'rea
 import { Cara, type Humor } from './Cara'
 import { ImpresoraAnimada } from './ImpresoraAnimada'
 import { PanelImpresora } from './PanelImpresora'
+import { elegirFoto, type FotoRecibida } from './lib/fotos'
 import { Pensamiento } from './Pensamiento'
 import { pcActivo, type ActividadPc } from './lib/actividad'
 import { describirImpresoras, inferirEstado, type EstadoImpresora, type InformeImpresoras } from './lib/impresoras'
@@ -11,7 +12,7 @@ import { detectarLlamado, esConfirmacion, interpretar, type Orden } from './lib/
 import { callar, desbloquear, hablar, sonar, type Sonido } from './lib/audio'
 import { frase, pedirClima } from './lib/clima'
 import { aplicarRemota, cargarAjustes, guardarAjustes, limpiarLlamadas, temaConfig, type Ajustes } from './lib/config'
-import { conectarLocal, estadoLocal, guardarConfigLocal, leerImpresoras } from './lib/canalLocal'
+import { conectarLocal, estadoLocal, guardarConfigLocal, leerImpresoras, urlFoto } from './lib/canalLocal'
 import { conectarNtfy } from './lib/ntfy'
 import { Presencia } from './lib/presencia'
 import { Sentado } from './lib/sentado'
@@ -50,6 +51,8 @@ interface Aviso {
   /** Solo avisos de la impresora: qué dibujo mostrar. */
   estado?: EstadoImpresora
   impresora?: string
+  /** Cuándo llegó (reloj del celu): sirve para emparejarlo con su foto. */
+  en?: number
 }
 
 function minutos(ms: number) {
@@ -70,6 +73,7 @@ export function App() {
   const [ausenteLargo, setAusenteLargo] = useState(false)
   const [pensando, setPensando] = useState(false)
   const [informe, setInforme] = useState<InformeImpresoras>({ ts: null, impresoras: [] })
+  const [fotos, setFotos] = useState<FotoRecibida[]>([])
   // Oído: 'sin' = no disponible (navegador común); 'listo' = esperando "che nooby"; 'atento' = ya respondió y escucha el pedido
   const [oido, setOido] = useState<'sin' | 'listo' | 'atento'>('sin')
   const [oyo, setOyo] = useState('')
@@ -136,7 +140,7 @@ export function App() {
       opciones: { cerrarEn?: number; forzarVoz?: boolean; estado?: EstadoImpresora; impresora?: string } = {},
     ) => {
       cortarAlarma()
-      setAviso({ texto, sonido, estado: opciones.estado, impresora: opciones.impresora })
+      setAviso({ texto, sonido, estado: opciones.estado, impresora: opciones.impresora, en: Date.now() })
       const habla = opciones.forzarVoz || ajustesRef.current.voz
       // Solo la alarma de la impresión suena como alarma. Todo lo demás se dice en voz alta, sin "ding" antes;
       // si la voz está apagada, suena la campanita para que el aviso no pase en silencio.
@@ -374,6 +378,13 @@ export function App() {
         actividadPcRef.current = { idleMs, en: Date.now() }
       },
       alImpresoras: setInforme,
+      alFoto: (f) =>
+        setFotos((previas) =>
+          [
+            ...previas.filter((p) => p.clave !== f.impresora),
+            { clave: f.impresora, nombre: f.nombre, url: urlFoto(f.impresora, f.ts), recibidaEn: Date.now() },
+          ].slice(-6),
+        ),
     })
   }, [modo, lanzarAviso])
 
@@ -687,6 +698,8 @@ export function App() {
 
   const enlaceOk = ntfyOk === true
   const estadoAviso: EstadoImpresora = aviso?.estado ?? inferirEstado(aviso?.texto ?? '')
+  // La foto que llegó junto con este aviso (si el agente mandó una).
+  const fotoAviso = aviso?.sonido === 'alarma' ? elegirFoto(fotos, aviso.en ?? 0, aviso.impresora) : null
 
   return (
     <main className="app pantalla" onPointerDown={seguirDedo}>
@@ -733,7 +746,14 @@ export function App() {
 
             <div className="zona-mensaje">
               {aviso?.sonido === 'alarma' ? (
-                <PanelImpresora texto={aviso.texto} estado={estadoAviso} informe={informe} alOk={entendido} />
+                <PanelImpresora
+                  texto={aviso.texto}
+                  estado={estadoAviso}
+                  informe={informe}
+                  impresora={aviso.impresora}
+                  foto={fotoAviso?.url}
+                  alOk={entendido}
+                />
               ) : aviso ? (
                 <div className={`burbuja ${aviso.sonido}`} role="alert">
                   <p>{aviso.texto}</p>

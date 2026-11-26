@@ -39,7 +39,12 @@ export interface Escuchas {
   alActividad?: (idleMs: number) => void
   /** El agente de las impresoras mandó un informe nuevo. */
   alImpresoras?: (informe: import('./impresoras').InformeImpresoras) => void
+  /** El agente mandó una foto de una impresora (el celu la pide aparte con urlFoto). */
+  alFoto?: (foto: { impresora: string; nombre: string; ts: number }) => void
 }
+
+/** Dirección de la foto de una impresora; el `ts` evita que el navegador muestre una vieja guardada. */
+export const urlFoto = (clave: string, ts: number) => `/api/foto?impresora=${encodeURIComponent(clave)}&t=${ts}`
 
 /** Escucha avisos y cambios del servidor. EventSource reconecta solo. */
 export function conectarLocal(e: Escuchas): () => void {
@@ -67,6 +72,11 @@ export function conectarLocal(e: Escuchas): () => void {
   })
   al('entrenar', (d) => e.alEntrenar?.(typeof d.frase === 'string' && d.frase ? d.frase : 'che nooby'))
   al('config', (d) => e.alConfig(d))
+  al('foto', (d) => {
+    if (typeof d.impresora === 'string' && typeof d.ts === 'number') {
+      e.alFoto?.({ impresora: d.impresora, nombre: typeof d.nombre === 'string' ? d.nombre : '', ts: d.ts })
+    }
+  })
   al('impresoras', (d) => {
     if (Array.isArray(d.impresoras)) e.alImpresoras?.(d as unknown as import('./impresoras').InformeImpresoras)
   })

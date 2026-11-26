@@ -13,6 +13,7 @@ por USB a una PC con Windows. Esa PC tiene un servidor de Nooby (`http://127.0.0
 | Para qué | Qué manda | Qué hace Nooby |
 |---|---|---|
 | **Avisar algo importante** (terminó, falló) | `POST /api/aviso` | Suena una alarma, la cara se pone en alerta y dice el texto en voz alta. Se repite hasta que el usuario toca "Entendido". |
+| **Mostrar una foto de la impresora** | `POST /api/foto` | La foto aparece en el panel de la derecha junto con el aviso, hasta el OK o los 5 minutos. |
 | **Contar cómo están las impresoras** | `POST /api/impresoras` | Guarda el último informe. Si el usuario pregunta por voz ("che nooby, ¿cómo van las impresoras?" / "¿cuánto falta?") lo lee en voz alta. |
 
 Nooby **no llama** al agente: consulta lo último que el agente le informó. (Si más adelante hacen falta órdenes hacia el agente,
@@ -28,7 +29,7 @@ por ejemplo "pausá la impresión", se define otro endpoint; hoy no existe.)
    igual que los demás (cifrado), **nunca** en el repo, en logs, ni en mensajes.
 3. Conviene fijar la IP de la PC en el router (reserva DHCP), porque si cambia, la dirección deja de servir.
 
-Desde la red, el servidor **solo** acepta `POST /api/aviso` y `POST /api/impresoras`, y siempre con el token. Cualquier otra ruta
+Desde la red, el servidor **solo** acepta `POST /api/aviso`, `POST /api/impresoras` y `POST /api/foto`, y siempre con el token. Cualquier otra ruta
 responde 403. No exponer el puerto a internet.
 
 Si el token se filtra: "Generar token nuevo" en el panel y actualizarlo en el agente.
@@ -85,6 +86,36 @@ Mismos encabezados. Se manda **la lista completa** de impresoras cada vez (reemp
   "No tengo datos recientes de las impresoras" en vez de decir algo que puede ser falso.
 - No inventar datos: si no se conoce el avance o lo que falta, no mandar esos campos.
 
+## `POST /api/foto`
+
+La foto de la cámara de la impresora (la misma que se manda por Telegram al terminar o fallar). Mismo `X-Token`.
+
+- `Content-Type: image/jpeg` y el **JPEG tal cual en el cuerpo** (sin base64, sin JSON). Máximo **2 MB**.
+- La impresora va en la dirección: `POST /api/foto?impresora=H2C` (o en el encabezado `X-Impresora`). Tiene que ser el mismo nombre que
+  se manda en `/api/aviso` (`impresora`) y en `/api/impresoras` (`nombre`); no importan mayúsculas ni símbolos.
+- Respuestas: `200 {"ok":true,"impresora":"h2c","bytes":9402}`, `400` no es un JPEG, `401` token, `413` más de 2 MB, `415` falta
+  `Content-Type: image/jpeg`.
+- **Cuándo mandarla:** junto con el aviso de que terminó o falló, **justo antes o justo después** (hasta 90 segundos de diferencia). Nooby empareja
+  la foto con el aviso por cercanía en el tiempo y por impresora: una foto de otra impresora, o vieja, no se muestra.
+- Se guarda **solo en memoria** (no en disco; se pierde al reiniciar el servidor) y solo la última de cada impresora (máx. 6). No mandarla
+  periódicamente: es solo para acompañar un aviso.
+- Si no hay foto, el aviso se ve igual que siempre. Con foto, el panel muestra solo la tarjeta de la impresora del aviso para que entre.
+
+```bash
+curl -i -X POST 'http://IP-DE-LA-PC:8777/api/foto?impresora=H2C'   -H 'Content-Type: image/jpeg' -H 'X-Token: TU_TOKEN' --data-binary @foto.jpg
+```
+
+Ejemplo en Node (el `buffer` es el JPEG que ya tiene el agente):
+
+```js
+await fetch(`${url}/api/foto?impresora=${encodeURIComponent(impresora.nombre)}`, {
+  method: 'POST',
+  headers: { 'content-type': 'image/jpeg', 'x-token': token },
+  body: buffer,
+  signal: AbortSignal.timeout(5000),
+})
+```
+
 ## Reglas para que no moleste al resto del agente
 
 - **Es opcional y nunca bloquea.** Timeout de 3 segundos, un reintento como máximo. Si Nooby no responde (PC apagada, celu
@@ -137,6 +168,6 @@ por red está cerrado en el panel.
 
 ## Cómo saber que funciona
 
-- Al mandar un aviso, el celu suena y la cara lo dice.
+- Al mandar un aviso, el celu suena y la cara lo dice. Si mandaste también una foto, aparece en el panel de la derecha.
 - En el panel de Nooby (sección 4) aparece "Impresoras: último informe hace N s" con lo que se mandó.
 - Por voz: "che nooby" … "¿cómo van las impresoras?".

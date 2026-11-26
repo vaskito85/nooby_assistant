@@ -54,6 +54,9 @@ Web app de una pantalla (Vite + React + TS) que se muestra en un celu viejo (Gal
   error ✗ / pausa) y el costado muestra `PanelImpresora` (texto + estado de cada impresora del último informe, errores primero, máx. 3). Se cierra con "OK" (botón o voz:
   mientras suena la alarma el micrófono pasa a modo libre) o a los 5 min (`AVISO_IMPRESORA_MS`). El estado viene en `POST /api/aviso {estado}` o se deduce del texto
   (`inferirEstado`). Un aviso nuevo reemplaza al anterior y reinicia la cuenta.
+- **Fotos de la impresora**: `POST /api/foto?impresora=H2C` (JPEG crudo ≤ 2 MB, con X-Token desde la red). Se guardan SOLO en memoria (máx. 6, una por impresora); el servidor emite
+  el evento SSE `foto` y el celu la pide con `GET /api/foto` (solo localhost). `lib/fotos.ts` la empareja con el aviso por cercanía (±90 s, reloj del celu) e impresora.
+  Con foto, `PanelImpresora` muestra solo la tarjeta de esa impresora para que todo entre.
 - La cámara se auto-frena: si una lectura tarda mucho (celu cargado), espera el doble antes de la siguiente (`msInferencia` en __noobyDebug).
 - Depurar el celu: `adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>` + CDP; `window.__noobyDebug` trae ciclos, cuadros,
   conCara, msInferencia. La app del celu solo se reinstala si cambia su versionName (si no, se pierden los permisos).

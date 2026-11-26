@@ -33,7 +33,11 @@
 ## Hecho (v0.4.2)
 - [x] La cara pasa a ser una impresora al llegar un aviso; info al costado hasta OK o 5 min
 
+## Hecho (v0.4.3)
+- [x] Foto de la impresora en el panel de la derecha junto con el aviso
+
 ## Pendiente
+- [ ] T019 El agente del taller tiene que mandar la foto (POST /api/foto) junto al aviso de terminó/falló
 - [ ] T018 El agente del taller (suite_impresion_3D) tiene que implementar docs/integracion-agente.md
 - [ ] T016 Probar el oído en el celu: ajustar cómo entiende "che nooby" (ver window.__noobyDebug.oido)
 - [ ] T017 Etapa 2: preguntas libres con una IA (evaluar plan gratis; clave en el servidor de la PC)

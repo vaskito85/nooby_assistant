@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { claveImpresora } from './lib/fotos'
 import { INFORME_VIGENTE_MS, ordenarPorRelevancia, resumenCorto, type EstadoImpresora, type InformeImpresoras } from './lib/impresoras'
 
 const MAX_FILAS = 3 // lo que entra en la mitad de pantalla sin scroll
@@ -10,22 +12,34 @@ export function PanelImpresora({
   texto,
   estado,
   informe,
+  impresora,
+  foto,
   alOk,
 }: {
   texto: string
   estado: EstadoImpresora
   informe: InformeImpresoras
+  /** La impresora del aviso, si el agente la informa. */
+  impresora?: string
+  /** Dirección de la foto que llegó con el aviso, si hay. */
+  foto?: string
   alOk: () => void
 }) {
+  const [fotoRota, setFotoRota] = useState<string | null>(null)
+  const conFoto = !!foto && foto !== fotoRota
   // Un informe viejo no se muestra: mejor nada que algo que puede ser falso.
   const vigente = informe.ts != null && Date.now() - informe.ts <= INFORME_VIGENTE_MS
   const lista = vigente ? ordenarPorRelevancia(informe.impresoras) : []
-  const filas = lista.slice(0, MAX_FILAS)
-  const masOcultas = lista.length - filas.length
+  // Con foto no queda lugar para todas: solo la tarjeta de la impresora del aviso (o la más relevante).
+  const propia = impresora ? lista.find((p) => claveImpresora(p.nombre) === claveImpresora(impresora)) : undefined
+  const filas = conFoto ? (propia ?? lista[0] ? [propia ?? lista[0]] : []) : lista.slice(0, MAX_FILAS)
+  const masOcultas = conFoto ? 0 : lista.length - filas.length
 
   return (
-    <div className="panel-imp" data-estado={estado} role="alert">
+    <div className={`panel-imp${conFoto ? ' con-foto' : ''}`} data-estado={estado} role="alert">
       <p className="titulo">{texto}</p>
+
+      {conFoto && <img className="foto-imp" src={foto} alt="Foto de la impresora" onError={() => setFotoRota(foto ?? null)} />}
 
       {filas.length > 0 && (
         <ul className="lista-imp">
@@ -47,7 +61,7 @@ export function PanelImpresora({
       <button className="boton grande" onClick={alOk}>
         OK
       </button>
-      <p className="chico pista">Decí «OK» o tocá el botón. Se cierra solo a los 5 minutos.</p>
+      {!conFoto && <p className="chico pista">Decí «OK» o tocá el botón. Se cierra solo a los 5 minutos.</p>}
     </div>
   )
 }

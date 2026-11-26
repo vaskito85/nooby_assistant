@@ -203,6 +203,35 @@ function leerCuerpo(req, max = 8192) {
   })
 }
 
+/** Lee el cuerpo como bytes (para la foto). Corta si supera el máximo. */
+function leerBinario(req, max) {
+  return new Promise((resolve, reject) => {
+    const trozos = []
+    let total = 0
+    let corte = false
+    req.on('data', (c) => {
+      if (corte) return // lo que sigue se descarta, pero se lee hasta el final para poder contestar el error
+      total += c.length
+      if (total > max) {
+        corte = true
+        trozos.length = 0
+        reject(new Error('demasiado grande'))
+        return
+      }
+      trozos.push(c)
+    })
+    req.on('end', () => resolve(Buffer.concat(trozos)))
+    req.on('error', reject)
+  })
+}
+
+// ---------- fotos de las impresoras (solo en memoria: no se guardan en disco) ----------
+const FOTO_MAX_BYTES = 2 * 1024 * 1024
+const FOTOS_MAX = 6 // las más recientes; las demás se descartan
+const fotos = new Map() // clave de la impresora -> { ts, nombre, buf }
+const claveImpresora = (n) => (n || 'general').toLowerCase().replace(/[^a-z0-9ñ_-]+/g, '-').slice(0, 40) || 'general'
+const esJpeg = (b) => b.length > 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff
+
 const json = (res, codigo, obj) => {
   res.writeHead(codigo, { 'content-type': 'application/json', 'cache-control': 'no-store' })
   res.end(JSON.stringify(obj))
@@ -318,8 +347,8 @@ async function manejar(req, res) {
   } else {
     // Otra máquina de la red (ej. la Raspberry): solo puede mandar avisos e informes de impresoras, y con token.
     const ruta0 = new URL(req.url ?? '/', 'http://local').pathname
-    if (req.method !== 'POST' || (ruta0 !== '/api/aviso' && ruta0 !== '/api/impresoras')) {
-      return json(res, 403, { error: 'desde la red solo se aceptan POST /api/aviso y POST /api/impresoras' })
+    if (req.method !== 'POST' || (ruta0 !== '/api/aviso' && ruta0 !== '/api/impresoras' && ruta0 !== '/api/foto')) {
+      return json(res, 403, { error: 'desde la red solo se aceptan POST /api/aviso, /api/impresoras y /api/foto' })
     }
     if (!tokenValido(req)) return json(res, 401, { error: 'falta el encabezado X-Token o no coincide' })
   }
@@ -335,6 +364,7 @@ async function manejar(req, res) {
       pantallas: clientes.size,
       actividadPcMs: actividadPc ? actividadPc.idleMs : null,
       impresorasTs: impresoras.ts,
+      fotos: fotos.size,
     })
   }
 
@@ -435,6 +465,36 @@ async function manejar(req, res) {
       } catch {
         return json(res, 400, { error: 'JSON inválido' })
       }
+    }
+  }
+
+  if (ruta === '/api/foto') {
+    if (req.method === 'GET') {
+      // La pide el celu (por localhost) para mostrarla en el panel.
+      const f = fotos.get(claveImpresora(url.searchParams.get('impresora') ?? ''))
+      if (!f) return json(res, 404, { error: 'no hay foto' })
+      res.writeHead(200, { 'content-type': 'image/jpeg', 'cache-control': 'no-store', 'content-length': f.buf.length })
+      return res.end(f.buf)
+    }
+    if (req.method === 'POST') {
+      // La manda el agente de las impresoras: el JPEG tal cual en el cuerpo. La impresora va en ?impresora=H2C
+      // (o en el encabezado X-Impresora).
+      if (!String(req.headers['content-type']).includes('image/jpeg')) return json(res, 415, { error: 'usá Content-Type: image/jpeg' })
+      let buf
+      try {
+        buf = await leerBinario(req, FOTO_MAX_BYTES)
+      } catch {
+        res.setHeader('connection', 'close')
+        return json(res, 413, { error: 'la foto supera los 2 MB' })
+      }
+      if (!esJpeg(buf)) return json(res, 400, { error: 'no es un JPEG válido' })
+      const nombre = String(url.searchParams.get('impresora') ?? req.headers['x-impresora'] ?? '').trim().slice(0, 40)
+      const clave = claveImpresora(nombre)
+      fotos.delete(clave) // re-insertar la deja como la más reciente
+      fotos.set(clave, { ts: Date.now(), nombre, buf })
+      while (fotos.size > FOTOS_MAX) fotos.delete(fotos.keys().next().value)
+      emitir('foto', { impresora: clave, nombre, ts: Date.now() })
+      return json(res, 200, { ok: true, impresora: clave, bytes: buf.length })
     }
   }
 
