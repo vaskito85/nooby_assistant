@@ -7,6 +7,8 @@ import {
   leerImpresoras,
   leerRed,
   estadoLocal,
+  leerUso,
+  type ResumenUso,
   agregarMemoria,
   borrarDiaBitacora,
   borrarMemoria,
@@ -32,7 +34,18 @@ import { describirImpresoras, type InformeImpresoras } from './lib/impresoras'
 import { enviarNtfy } from './lib/ntfy'
 import { CATALOGO } from './lib/voz'
 
-type Seccion = 'inicio' | 'ajustes' | 'voz' | 'ia' | 'bitacora' | 'red' | 'frases' | 'avanzado'
+type Seccion = 'inicio' | 'ajustes' | 'voz' | 'ia' | 'uso' | 'bitacora' | 'red' | 'frases' | 'avanzado'
+
+const numero = (n: number) => n.toLocaleString('es-AR')
+const minutosDe = (seg: number) => (seg < 90 ? Math.round(seg) + ' s' : (seg / 60).toFixed(1).replace('.', ',') + ' min')
+function haceCuanto(ms: number) {
+  const s = Math.max(0, Math.round(ms / 1000))
+  if (s < 90) return s + ' s'
+  const m = Math.round(s / 60)
+  if (m < 90) return m + ' min'
+  const h = Math.round(m / 60)
+  return h < 36 ? h + ' h' : Math.round(h / 24) + ' días'
+}
 
 function temaNuevo() {
   const b = new Uint8Array(12)
@@ -64,6 +77,8 @@ export function Panel() {
   const [modeloIa, setModeloIa] = useState('')
   const [notaIa, setNotaIa] = useState('')
   const [seccion, setSeccion] = useState<Seccion>(() => (sessionStorage.getItem('nooby-panel') as Seccion | null) ?? 'inicio')
+  // Uso de la IA (tokens, cupo)
+  const [uso, setUso] = useState<ResumenUso | null>(null)
   // Bitácora y memoria
   const [diasBit, setDiasBit] = useState<{ dia: string; entradas: number }[]>([])
   const [diaSel, setDiaSel] = useState<string | null>(null)
@@ -221,6 +236,19 @@ export function Panel() {
     }
   }
 
+  // El uso se refresca solo mientras se mira (inicio o uso).
+  useEffect(() => {
+    if (modo !== 'local' || (seccion !== 'uso' && seccion !== 'inicio')) return
+    let vivo = true
+    const traer = () => leerUso().then((u) => vivo && setUso(u)).catch(() => undefined)
+    void traer()
+    const id = window.setInterval(() => void traer(), 5000)
+    return () => {
+      vivo = false
+      window.clearInterval(id)
+    }
+  }, [modo, seccion])
+
   const guardarClaveIa = async (cambio: { clave?: string; modelo?: string; borrar?: boolean; whisper?: boolean }) => {
     try {
       const i = await guardarIA(cambio)
@@ -294,6 +322,8 @@ export function Panel() {
   const celuOk = !!servidor && servidor.celus.length > 0
   const caraAbierta = !!servidor && servidor.pantallas > 0
   const segInforme = informe.ts == null ? null : Math.max(0, Math.round((Date.now() - informe.ts) / 1000))
+  // ¿Groq avisó que se acabó el cupo hace poco? (en la última hora; si pasó más, ya debería andar)
+  const sinCupoAhora = !!uso?.ultimoCupo && uso.ultimoCupo.kind === 'cupo' && uso.ahora - uso.ultimoCupo.en < 3_600_000
   const soloUsb = <p className="pn-ayuda">Esto necesita el modo USB (el servidor de la PC con el celu enchufado).</p>
 
   const secciones: { id: Seccion; icono: string; nombre: string }[] = [
@@ -301,6 +331,7 @@ export function Panel() {
     { id: 'ajustes', icono: '⚙️', nombre: 'Ajustes' },
     { id: 'voz', icono: '🎙️', nombre: 'Despertar' },
     { id: 'ia', icono: '✨', nombre: 'Charla IA' },
+    { id: 'uso', icono: '📊', nombre: 'Uso de la IA' },
     { id: 'bitacora', icono: '📓', nombre: 'Bitácora' },
     { id: 'red', icono: '🖨️', nombre: 'Impresoras' },
     { id: 'frases', icono: '💬', nombre: 'Qué decirle' },
@@ -357,7 +388,12 @@ export function Panel() {
                 ) : (
                   <Estado ok={null} titulo="Celu" detalle="Se conecta con un link (modo internet)" ir="avanzado" />
                 )}
-                <Estado ok={local ? !!ia?.configurada : null} titulo="Charla con IA" detalle={ia?.configurada ? 'Lista para conversar' : 'Falta cargar la clave'} ir="ia" />
+                <Estado
+                  ok={local ? !!ia?.configurada && !sinCupoAhora : null}
+                  titulo="Charla con IA"
+                  detalle={!ia?.configurada ? 'Falta cargar la clave' : sinCupoAhora ? 'Sin cupo en Groq (ver Uso de la IA)' : 'Lista para conversar'}
+                  ir={sinCupoAhora ? 'uso' : 'ia'}
+                />
                 <Estado
                   ok={segInforme == null ? false : segInforme < 600}
                   titulo="Impresoras"
@@ -581,6 +617,130 @@ export function Panel() {
                 </>
               ) : (
                 <div className="pn-tarjeta">{soloUsb}</div>
+              )}
+            </>
+          )}
+
+          {seccion === 'uso' && (
+            <>
+              <h2 className="pn-titulo">Uso de la inteligencia artificial</h2>
+              {!local ? (
+                <div className="pn-tarjeta">{soloUsb}</div>
+              ) : !uso ? (
+                <div className="pn-tarjeta">
+                  <p className="pn-ayuda">Cargando…</p>
+                </div>
+              ) : (
+                <>
+                  {uso.ultimoCupo && uso.ahora - uso.ultimoCupo.en < 24 * 3_600_000 && (
+                    <div className="pn-tarjeta pn-alerta">
+                      <h3>{uso.ultimoCupo.kind === 'tope_local' ? '⏸ Tope de Nooby' : '⚠ Groq avisó que se acabó el cupo'}</h3>
+                      <p>{uso.ultimoCupo.detalle || 'Sin detalle.'}</p>
+                      <p className="pn-ayuda">
+                        {uso.ultimoCupo.tipo === 'stt' ? 'Fue en la voz (Whisper)' : 'Fue en la charla'}
+                        {uso.ultimoCupo.modelo ? ' · modelo ' + uso.ultimoCupo.modelo : ''} · hace {haceCuanto(uso.ahora - uso.ultimoCupo.en)}
+                        {uso.ultimoCupo.esperaMin ? ' · volver a probar en unos ' + uso.ultimoCupo.esperaMin + ' min' : ''}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="pn-estados">
+                    <div className="pn-dato">
+                      <small>Charla hoy</small>
+                      <strong>{uso.hoy.chat.pedidos} pedidos</strong>
+                      <span>{numero(uso.hoy.chat.entrada + uso.hoy.chat.salida)} tokens</span>
+                      <span className="pn-ayuda">
+                        {numero(uso.hoy.chat.entrada)} de entrada · {numero(uso.hoy.chat.salida)} de salida
+                      </span>
+                    </div>
+                    <div className="pn-dato">
+                      <small>Voz (Whisper) hoy</small>
+                      <strong>{uso.hoy.stt.pedidos} transcripciones</strong>
+                      <span>{minutosDe(uso.hoy.stt.segundos)} de audio</span>
+                    </div>
+                    <div className="pn-dato" data-mal={uso.hoy.chat.cupo + uso.hoy.stt.cupo > 0 ? 'si' : undefined}>
+                      <small>Avisos de cupo hoy</small>
+                      <strong>{uso.hoy.chat.cupo + uso.hoy.stt.cupo}</strong>
+                      <span className="pn-ayuda">{uso.hoy.chat.errores + uso.hoy.stt.errores} errores en total</span>
+                    </div>
+                  </div>
+
+                  {(uso.limites.chat || uso.limites.stt) && (
+                    <div className="pn-tarjeta">
+                      <h3>Lo que informa Groq</h3>
+                      {(['chat', 'stt'] as const).map((k) => {
+                        const l = uso.limites[k]
+                        if (!l) return null
+                        return (
+                          <div key={k} className="pn-limite">
+                            <b>{k === 'chat' ? 'Charla' : 'Voz'}</b>
+                            {l.pedidosQuedan != null && (
+                              <span>
+                                Pedidos que quedan: <b>{numero(l.pedidosQuedan)}</b>
+                                {l.pedidosLimite != null ? ' de ' + numero(l.pedidosLimite) : ''}
+                                {l.reinicioPedidos ? ' (se renueva en ' + l.reinicioPedidos + ')' : ''}
+                              </span>
+                            )}
+                            {l.tokensQuedan != null && (
+                              <span>
+                                Tokens que quedan (por minuto): <b>{numero(l.tokensQuedan)}</b>
+                                {l.tokensLimite != null ? ' de ' + numero(l.tokensLimite) : ''}
+                                {l.reinicioTokens ? ' (se renueva en ' + l.reinicioTokens + ')' : ''}
+                              </span>
+                            )}
+                            <small className="pn-ayuda">Dato de hace {haceCuanto(uso.ahora - l.en)}</small>
+                          </div>
+                        )
+                      })}
+                      <p className="pn-ayuda">
+                        Groq cuenta por modelo y el límite diario de tokens no viene en estos datos: lo ves exacto en <code>console.groq.com</code>{' '}
+                        → Settings → Limits. Cuando se acaba, el aviso de arriba dice cuánto falta para volver a usarlo.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="pn-tarjeta">
+                    <h3>Últimos días</h3>
+                    {uso.dias.length === 0 ? (
+                      <p className="pn-ayuda">Todavía no hay datos. Se empiezan a contar desde esta versión.</p>
+                    ) : (
+                      <div className="pn-tabla">
+                        <div className="pn-fila-tabla cab">
+                          <span>Día</span>
+                          <span>Pedidos</span>
+                          <span>Tokens</span>
+                          <span>Audio</span>
+                          <span>Cupo</span>
+                        </div>
+                        {uso.dias.map((d) => (
+                          <div key={d.dia} className="pn-fila-tabla">
+                            <span>{d.dia}</span>
+                            <span>{d.chat.pedidos}</span>
+                            <span>{numero(d.chat.entrada + d.chat.salida)}</span>
+                            <span>{minutosDe(d.stt.segundos)}</span>
+                            <span data-mal={d.chat.cupo + d.stt.cupo > 0 ? 'si' : undefined}>{d.chat.cupo + d.stt.cupo}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {Object.keys(uso.hoy.modelos).length > 0 && (
+                      <p className="pn-ayuda">
+                        Hoy por modelo:{' '}
+                        {Object.entries(uso.hoy.modelos)
+                          .map(([m, v]) => m + ' (' + v.pedidos + ' pedidos, ' + numero(v.tokens) + ' tokens)')
+                          .join(' · ')}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="pn-fila">
+                    <button className="pn-btn secundario" onClick={() => void probarIa()}>
+                      Probar si ya anda
+                    </button>
+                  </div>
+                  {notaIa && <p className="pn-nota">{notaIa}</p>}
+                  <p className="pn-ayuda">También se lo podés preguntar a Nooby: «cuántos tokens llevo hoy» o «me quedé sin cupo».</p>
+                </>
               )}
             </>
           )}

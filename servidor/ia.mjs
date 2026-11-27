@@ -124,6 +124,14 @@ export const HERRAMIENTAS = [
   {
     type: 'function',
     function: {
+      name: 'ver_uso',
+      description: 'Cuánto cupo de inteligencia artificial se usó hoy (pedidos, tokens, minutos de audio) y si Groq avisó que se acabó. Para "cuántos tokens llevo" o "me quedé sin cupo".',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'ver_impresoras',
       description: 'Estado de las impresoras 3D del taller (último informe que mandó el agente).',
       parameters: { type: 'object', properties: {} },
@@ -171,16 +179,17 @@ export const ERRORES = {
 }
 
 export class ErrorIA extends Error {
-  constructor(tipo, detalle = '') {
+  constructor(tipo, detalle = '', headers = null) {
     super(ERRORES[tipo] ?? ERRORES.ia)
     this.tipo = tipo
+    this.headers = headers
     /** Qué dijo la API (para el log y el panel; no se dice en voz alta). */
     this.detalle = detalle
   }
 }
 
 /** Una vuelta de la API. Traduce los códigos HTTP a tipos de error propios. */
-async function pedir({ fetchFn, clave, modelo, mensajes, herramientas = true, razonamiento = true }) {
+async function pedir({ fetchFn, clave, modelo, mensajes, herramientas = true, razonamiento = true, alUso }) {
   let r
   try {
     r = await fetchFn(process.env.NOOBY_IA_URL || URL_GROQ, {
@@ -201,37 +210,47 @@ async function pedir({ fetchFn, clave, modelo, mensajes, herramientas = true, ra
     throw new ErrorIA('red', 'sin conexión con la API')
   }
   if (r.status === 401 || r.status === 403) throw new ErrorIA('clave')
-  if (r.status === 429) throw new ErrorIA('cupo')
+  if (r.status === 429) throw new ErrorIA('cupo', await detalleError(r), r.headers)
   if (!r.ok) {
-    let det = ''
-    try {
-      const j = JSON.parse(await r.text())
-      det = String(j?.error?.message ?? j?.error?.code ?? '')
-    } catch {
-      /* sin cuerpo legible */
-    }
-    throw new ErrorIA('ia', `HTTP ${r.status} ${det}`.trim().slice(0, 300))
+    throw new ErrorIA('ia', `HTTP ${r.status} ${await detalleError(r)}`.trim().slice(0, 300))
   }
   try {
-    return (await r.json()).choices?.[0]?.message ?? null
+    const j = await r.json()
+    alUso?.({ tipo: 'chat', modelo, usage: j.usage, headers: r.headers })
+    return j.choices?.[0]?.message ?? null
   } catch {
     throw new ErrorIA('ia')
   }
+}
+
+/** Lo que dijo la API al fallar (para el log y el panel). Si es un 429 incluye cuándo se puede volver a probar. */
+async function detalleError(r) {
+  let det = ''
+  try {
+    const j = JSON.parse(await r.text())
+    det = String(j?.error?.message ?? j?.error?.code ?? '')
+  } catch {
+    /* sin cuerpo legible */
+  }
+  const espera = r.headers && typeof r.headers.get === 'function' ? r.headers.get('retry-after') : null
+  if (r.status === 429 && espera && !/try again in/i.test(det)) det += ` (reintentar en ${espera} s)`
+  return det.slice(0, 400)
 }
 
 /**
  * Charla con herramientas: la IA puede pedir ejecutar cosas (poner un temporizador, ver el clima…) y se le devuelve el resultado
  * hasta que contesta con texto. `ejecutar(nombre, args)` devuelve un objeto simple. Devuelve { texto }.
  */
-export async function charlar({ clave, modelo, historial, contexto, ejecutar, fetchFn = fetch }) {
+export async function charlar({ clave, modelo, historial, contexto, ejecutar, fetchFn = fetch, alUso, alError }) {
   if (!clave) throw new ErrorIA('sin_clave')
   const msgs = [{ role: 'system', content: instrucciones(contexto) }, ...historial]
   let modeloUsado = modelo || MODELO_POR_DEFECTO
   let ultimoError = null
+  let cambio = null // por qué se usó otro modelo: '404' (ya no existe) o 'cupo' (a ese se le acabó el cupo)
   for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
     let m
     for (const candidato of [modelo || MODELO_POR_DEFECTO, ...MODELOS_ALTERNATIVOS.filter((x) => x !== modelo)].filter((x, i, v) => v.indexOf(x) === i)) {
-      const base = { fetchFn, clave, modelo: candidato, mensajes: msgs }
+      const base = { fetchFn, clave, modelo: candidato, mensajes: msgs, alUso }
       try {
         const intentos = [{}, { razonamiento: false }, { razonamiento: false, herramientas: false }]
         for (let i = 0; i < intentos.length; i++) {
@@ -247,9 +266,14 @@ export async function charlar({ clave, modelo, historial, contexto, ejecutar, fe
         modeloUsado = candidato
         break
       } catch (e) {
-        // 404 = ese modelo no existe (o la cuenta no tiene acceso): se prueba el siguiente.
-        if (e instanceof ErrorIA && e.tipo === 'ia' && /HTTP 404/.test(e.detalle)) {
+        // 404 = ese modelo no existe (o la cuenta no tiene acceso); 429 = a ese modelo se le acabó el cupo (cada modelo tiene el suyo):
+        // en los dos casos se prueba el siguiente.
+        const noExiste = e instanceof ErrorIA && e.tipo === 'ia' && /HTTP 404/.test(e.detalle)
+        const sinCupo = e instanceof ErrorIA && e.tipo === 'cupo'
+        if (noExiste || sinCupo) {
           ultimoError = e
+          cambio = noExiste ? '404' : (cambio ?? 'cupo')
+          alError?.({ tipo: 'chat', modelo: candidato, kind: e.tipo === 'cupo' ? 'cupo' : 'ia', detalle: e.detalle, headers: e.headers })
           continue
         }
         throw e
@@ -261,7 +285,7 @@ export async function charlar({ clave, modelo, historial, contexto, ejecutar, fe
     if (llamadas.length === 0) {
       const texto = limpiarRespuesta(m.content)
       if (!texto) throw new ErrorIA('ia')
-      return { texto, modelo: modeloUsado }
+      return { texto, modelo: modeloUsado, cambio: modeloUsado === (modelo || MODELO_POR_DEFECTO) ? null : cambio }
     }
     msgs.push({ role: 'assistant', content: '', tool_calls: llamadas })
     for (const l of llamadas) {
@@ -386,7 +410,7 @@ export function limpiarTranscripcion(j) {
   return texto.slice(0, 600)
 }
 
-export async function transcribir({ clave, pcm, modelo = MODELO_STT, fetchFn = fetch }) {
+export async function transcribir({ clave, pcm, modelo = MODELO_STT, fetchFn = fetch, alUso }) {
   if (!clave) throw new ErrorIA('sin_clave')
   const f = new FormData()
   f.append('file', new Blob([armarWav(normalizarPcm(pcm))], { type: 'audio/wav' }), 'frase.wav')
@@ -407,18 +431,12 @@ export async function transcribir({ clave, pcm, modelo = MODELO_STT, fetchFn = f
     throw new ErrorIA('red', 'sin conexión con la API')
   }
   if (r.status === 401 || r.status === 403) throw new ErrorIA('clave')
-  if (r.status === 429) throw new ErrorIA('cupo')
-  if (!r.ok) {
-    let det = ''
-    try {
-      det = String(JSON.parse(await r.text())?.error?.message ?? '')
-    } catch {
-      /* sin cuerpo legible */
-    }
-    throw new ErrorIA('ia', `HTTP ${r.status} ${det}`.trim().slice(0, 300))
-  }
+  if (r.status === 429) throw new ErrorIA('cupo', await detalleError(r), r.headers)
+  if (!r.ok) throw new ErrorIA('ia', `HTTP ${r.status} ${await detalleError(r)}`.trim().slice(0, 300))
   try {
-    return limpiarTranscripcion(await r.json())
+    const j = await r.json()
+    alUso?.({ tipo: 'stt', modelo, segundos: pcm.length / (FRECUENCIA_PCM * 2), headers: r.headers })
+    return limpiarTranscripcion(j)
   } catch {
     throw new ErrorIA('ia')
   }

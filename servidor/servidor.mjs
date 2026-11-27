@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { GET as pedirCiudad } from '../api/ciudad.js'
 import { GET as pedirClima } from '../api/clima.js'
 import { crearBitacora, crearMemoria, esDia, claveDia } from './bitacora.mjs'
+import { crearUso, esperaDe } from './uso.mjs'
 import { charlar, describirCodigo, ErrorIA, ERRORES, limpiarMensajes, MODELO_POR_DEFECTO, MODELOS_RETIRADOS, juntarPcm, transcribir } from './ia.mjs'
 
 const RAIZ = fileURLToPath(new URL('..', import.meta.url))
@@ -300,6 +301,8 @@ function revisarAgenda() {
 // ---------- bitácora y memoria ----------
 const bitacora = crearBitacora(join(CARPETA, 'bitacora'))
 const memoria = crearMemoria(join(CARPETA, 'memoria.json'))
+// Cuánto se usa la IA (tokens, minutos de audio, cupo): se ve en el panel y se le puede preguntar a Nooby.
+const uso = crearUso(join(CARPETA, 'uso.json'))
 
 // ---------- charla con IA: herramientas que puede usar ----------
 const claveIA = () => process.env.GROQ_API_KEY || estado.servidor.ia.clave
@@ -369,6 +372,14 @@ async function herramientaIA(nombre, a) {
       agenda = agenda.filter((i) => !(i.estado === 'pendiente' && (cuales === 'todos' || i.tipo === cuales)))
       guardarAgenda()
       return { canceladas: antes - agenda.length }
+    }
+    case 'ver_uso': {
+      const r = uso.resumen()
+      return {
+        hoy: { pedidos: r.hoy.chat.pedidos, tokens: r.hoy.chat.entrada + r.hoy.chat.salida, avisos_de_cupo: r.hoy.chat.cupo, minutos_de_audio: Math.round(r.hoy.stt.segundos / 6) / 10 },
+        ultimo_aviso_de_cupo: r.ultimoCupo ? { detalle: r.ultimoCupo.detalle, hace_minutos: Math.round((r.ahora - r.ultimoCupo.en) / 60_000) } : null,
+        groq_informa: r.limites.chat ?? null,
+      }
     }
     case 'leer_bitacora': {
       const t = bitacora.rango(String(a.desde ?? ''), a.hasta ? String(a.hasta) : undefined)
@@ -773,6 +784,8 @@ async function manejar(req, res) {
     if (req.method === 'DELETE') return json(res, 200, { borrados: memoria.borrarId(String(url.searchParams.get('id') ?? '')) })
   }
 
+  if (ruta === '/api/uso' && req.method === 'GET') return json(res, 200, uso.resumen())
+
   if (ruta === '/api/ia') {
     // Nunca devuelve la clave: solo si hay una y qué modelo se usa.
     if (req.method === 'GET') return json(res, 200, { configurada: Boolean(claveIA()), entorno: Boolean(process.env.GROQ_API_KEY), modelo: estado.servidor.ia.modelo, whisper: estado.servidor.ia.whisper !== false })
@@ -811,11 +824,15 @@ async function manejar(req, res) {
     if (!pcm) return json(res, 400, { error: 'audio inválido (de 0,4 a 40 s, PCM 16 kHz en base64)' })
     if (!claveIA()) return json(res, 200, { error: 'sin_clave' })
     if (estado.servidor.ia.whisper === false) return json(res, 200, { error: 'apagado' })
-    if (!cupoLocalSTT()) return json(res, 200, { error: 'cupo' })
+    if (!cupoLocalSTT()) {
+      uso.registrarError({ tipo: 'stt', kind: 'tope_local', detalle: 'tope local de 15 transcripciones por minuto' })
+      return json(res, 200, { error: 'cupo' })
+    }
     try {
-      return json(res, 200, { texto: await transcribir({ clave: claveIA(), pcm }) })
+      return json(res, 200, { texto: await transcribir({ clave: claveIA(), pcm, alUso: (u) => uso.registrar(u) }) })
     } catch (e) {
       const tipo = e instanceof ErrorIA ? e.tipo : 'ia'
+      uso.registrarError({ tipo: 'stt', modelo: 'whisper', kind: tipo, detalle: e instanceof ErrorIA ? e.detalle : String(e), headers: e instanceof ErrorIA ? e.headers : null })
       console.log(`[stt] ${tipo}${e instanceof ErrorIA && e.detalle ? ': ' + e.detalle : ''}`)
       return json(res, 200, { error: tipo })
     }
@@ -833,9 +850,14 @@ async function manejar(req, res) {
     const historial = limpiarMensajes(c.mensajes)
     if (historial.length === 0) return json(res, 400, { error: 'falta mensajes (el último tiene que ser del usuario)' })
     if (!claveIA()) return json(res, 200, { error: 'sin_clave', texto: ERRORES.sin_clave })
-    if (!cupoLocalIA()) return json(res, 200, { error: 'cupo', texto: ERRORES.cupo })
+    if (!cupoLocalIA()) {
+      uso.registrarError({ tipo: 'chat', modelo: estado.servidor.ia.modelo, kind: 'tope_local', detalle: 'tope local de 20 pedidos por minuto' })
+      return json(res, 200, { error: 'cupo', texto: ERRORES.cupo })
+    }
     try {
-      const { texto, modelo: usado } = await charlar({
+      const { texto, modelo: usado, cambio } = await charlar({
+        alUso: (u) => uso.registrar(u),
+        alError: (e) => uso.registrarError(e),
         clave: claveIA(),
         modelo: estado.servidor.ia.modelo,
         historial,
@@ -848,18 +870,24 @@ async function manejar(req, res) {
         },
         ejecutar: herramientaIA,
       })
-      if (usado && usado !== estado.servidor.ia.modelo) {
-        // El modelo guardado ya no existía y otro respondió: queda ese para la próxima.
+      // Si el modelo guardado ya no existe y otro respondió, queda ese para la próxima. Si fue solo porque a ese modelo se le acabó el
+      // cupo, no se cambia nada: mañana vuelve a andar con el de siempre (el otro se usa solo mientras tanto).
+      if (usado && usado !== estado.servidor.ia.modelo && cambio === '404') {
         estado.servidor.ia.modelo = usado
         guardar()
         console.log(`[ia] modelo cambiado a ${usado}`)
-      }
+      } else if (cambio === 'cupo') console.log(`[ia] sin cupo en ${estado.servidor.ia.modelo}: respondió ${usado}`)
       return json(res, 200, { texto })
     } catch (e) {
       const tipo = e instanceof ErrorIA ? e.tipo : 'ia'
       if (!(e instanceof ErrorIA)) console.log('[ia] error:', e)
       else console.log(`[ia] ${tipo}${e.detalle ? ': ' + e.detalle : ''}`)
-      return json(res, 200, { error: tipo, texto: ERRORES[tipo] ?? ERRORES.ia, detalle: e instanceof ErrorIA ? e.detalle : undefined })
+      const detalle = e instanceof ErrorIA ? e.detalle : undefined
+      uso.registrarError({ tipo: 'chat', modelo: estado.servidor.ia.modelo, kind: tipo, detalle: detalle ?? String(e), headers: e instanceof ErrorIA ? e.headers : null })
+      // Si Groq dice cuándo se vuelve a poder, se lo decimos en voz alta.
+      const espera = tipo === 'cupo' ? esperaDe(detalle) : null
+      const texto = espera ? `Me quedé sin cupo de la inteligencia. Probá de nuevo en unos ${espera} minutos.` : (ERRORES[tipo] ?? ERRORES.ia)
+      return json(res, 200, { error: tipo, texto, detalle })
     }
   }
 

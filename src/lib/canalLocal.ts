@@ -357,3 +357,56 @@ export async function borrarMemoria(id: string): Promise<void> {
   const r = await fetch('/api/memoria?id=' + encodeURIComponent(id), { method: 'DELETE' })
   if (!r.ok) throw new Error('memoria ' + r.status)
 }
+
+// ---------- uso de la inteligencia artificial ----------
+export interface UsoChat {
+  pedidos: number
+  entrada: number
+  salida: number
+  errores: number
+  cupo: number
+}
+export interface UsoStt {
+  pedidos: number
+  segundos: number
+  errores: number
+  cupo: number
+}
+export interface UsoDia {
+  dia: string
+  chat: UsoChat
+  stt: UsoStt
+  modelos: Record<string, { pedidos: number; tokens: number }>
+}
+export interface LimitesGroq {
+  pedidosLimite: number | null
+  pedidosQuedan: number | null
+  tokensLimite: number | null
+  tokensQuedan: number | null
+  reinicioPedidos: string | null
+  reinicioTokens: string | null
+  modelo?: string
+  en: number
+}
+export interface AvisoUso {
+  tipo: 'chat' | 'stt'
+  modelo: string | null
+  kind: string
+  detalle: string
+  esperaMin?: number | null
+  en: number
+}
+export interface ResumenUso {
+  hoy: UsoDia
+  dias: UsoDia[]
+  limites: { chat?: LimitesGroq; stt?: LimitesGroq }
+  ultimoCupo: AvisoUso | null
+  ultimoError: AvisoUso | null
+  ahora: number
+}
+
+export async function leerUso(): Promise<ResumenUso> {
+  const r = await fetch('/api/uso', { cache: 'no-store' })
+  if (!r.ok) throw new Error('uso ' + r.status)
+  return r.json()
+}
