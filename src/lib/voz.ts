@@ -117,7 +117,7 @@ const LISTAR =
   /\b(que|cuales|cuantos|cuantas) (recordatorios|temporizadores|alarmas|avisos)\b|\bmis (recordatorios|temporizadores|alarmas)\b|\bcuanto (falta|queda) (para|en) (el|la|mi) (temporizador|timer|alarma)\b|\bcuanto queda\b|\btengo (algun|alguna|un|una|ningun|ninguna)? ?(recordatorio|temporizador|alarma)/
 const FALTA_PARA = /\bcuanto falta (para|hasta)\b|\bcuantos dias (faltan|quedan) (para|hasta)\b|\bcuanto queda (para|hasta)\b/
 const PIDE_TEMPORIZADOR = /\b(temporizador|timer|cronometro|cuenta regresiva)\b/
-const PIDE_RECORDATORIO = /\b(recordame|recuerdame|acordame|agendame|anotame|recordatorio|recordarme)\b/
+const PIDE_RECORDATORIO = /\b(recordame|recordamelo|recordalo|recuerdame|recuerdamelo|recuerdalo|acordame|acordate de|haceme acordar|agendame|anotame|recordatorio|recordarme)\b/
 
 const VERBOS_VER = /\b(mostra|mostrame|muestra|muestrame|ensena|ensename|dejame ver|quiero ver|veo|ver|foto|fotos|video|camara)\b|\bque se ve\b/
 const PALABRAS_IMPRESORA = /\b(impresora|impresoras|pieza|impresion|h2c|a1|neptun\w*|bambu)\b|\ba uno\b|\bhache\b/

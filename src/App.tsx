@@ -804,6 +804,7 @@ export function App() {
   /** Dice algo en voz alta sin mostrar burbuja (la info ya está en la vista). */
   const hablarSolo = (texto: string, forzar = false) => {
     ultimaRespuesta.current = texto
+    anotar('nooby', texto) // clima, impresoras…: también quedan en la bitácora y la IA sabe qué se contestó
     if (!forzar && !ajustesRef.current.voz) return
     setHablando(true)
     hablar(texto)

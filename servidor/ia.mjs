@@ -246,6 +246,9 @@ export async function charlar({ clave, modelo, historial, contexto, ejecutar, fe
   const msgs = [{ role: 'system', content: instrucciones(contexto) }, ...historial]
   let modeloUsado = modelo || MODELO_POR_DEFECTO
   let ultimoError = null
+  let huboHerramientas = false
+  let avisadoSinHerramienta = false
+  const ultimoUsuario = planoIA([...historial].reverse().find((h) => h.role === 'user')?.content)
   let cambio = null // por qué se usó otro modelo: '404' (ya no existe) o 'cupo' (a ese se le acabó el cupo)
   for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
     let m
@@ -285,8 +288,20 @@ export async function charlar({ clave, modelo, historial, contexto, ejecutar, fe
     if (llamadas.length === 0) {
       const texto = limpiarRespuesta(m.content)
       if (!texto) throw new ErrorIA('ia')
+      // Dijo "listo" sin hacer nada: se le avisa una vez para que llame la herramienta (o pregunte lo que falta).
+      if (!huboHerramientas && !avisadoSinHerramienta && PIDE_ACCION.test(ultimoUsuario) && DICE_HECHO.test(planoIA(texto))) {
+        avisadoSinHerramienta = true
+        msgs.push({ role: 'assistant', content: texto })
+        msgs.push({
+          role: 'user',
+          content:
+            '(Aviso del sistema) No llamaste ninguna herramienta, así que todavía no se hizo nada. Si el pedido era un recordatorio, un temporizador o anotar algo, llamá ahora la herramienta que corresponda; si falta un dato (por ejemplo para cuándo), preguntalo en vez de decir que está listo.',
+        })
+        continue
+      }
       return { texto, modelo: modeloUsado, cambio: modeloUsado === (modelo || MODELO_POR_DEFECTO) ? null : cambio }
     }
+    huboHerramientas = true
     msgs.push({ role: 'assistant', content: '', tool_calls: llamadas })
     for (const l of llamadas) {
       let resultado
@@ -306,8 +321,35 @@ export async function charlar({ clave, modelo, historial, contexto, ejecutar, fe
 const RAZONAMIENTO_FILTRADO =
   /\b(the user (asked|said|wants|is asking)|we need to|we should|let'?s (answer|respond|craft|produce)|should respond|the answer should|okay, we|i need to respond)\b/i
 
+const planoIA = (t) => String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+
+/** A veces el modelo dice lo mismo dos veces con otras palabras ("Quedó así: …. Listo, la lista quedó así: …"): se deja la primera. */
+export function sinRepetidas(texto) {
+  const frases = texto.split(/(?<=[.?!])\s+/)
+  const vistas = []
+  const salida = []
+  for (const f of frases) {
+    const w = new Set(planoIA(f).split(/\W+/).filter((p) => p.length > 2))
+    const repite = vistas.some((v) => {
+      if (w.size < 4 || v.size < 4) return false
+      let comunes = 0
+      for (const p of w) if (v.has(p)) comunes++
+      return comunes / Math.min(w.size, v.size) >= 0.6
+    })
+    if (!repite) {
+      salida.push(f)
+      vistas.push(w)
+    }
+  }
+  return salida.join(' ')
+}
+
 /** Tope de lo que se dice en voz alta: mientras Nooby habla el micrófono está apagado, así que respuestas largas dejan sin oído. */
 export const MAX_VOZ = 320
+
+/** El pedido era una acción (recordatorio, temporizador, nota) y la respuesta dice que está hecho: hay que haber llamado una herramienta. */
+const PIDE_ACCION = /\b(record|acord|avis|anot|temporizador|timer|alarma|cronometro)/
+const DICE_HECHO = /\b(listo|anote|anotado|anotada|te (lo )?recuerdo|programad[oa]|puse|ya (puse|anote|cree|programe)|quedo (anotado|agendado))\b/
 
 /** Saca lo que no se puede leer en voz alta: markdown, emojis, viñetas, rayas de puntos, espacios de más. Si hay razonamiento filtrado devuelve ''. */
 export function limpiarRespuesta(t) {
@@ -317,9 +359,11 @@ export function limpiarRespuesta(t) {
     .replace(/^\s*[-•]\s+/gm, '')
     .replace(/\p{Extended_Pictographic}/gu, '')
     .replace(/(?:\s*[.…]){3,}/g, '.') // "… … …" o "......" no se leen
+    .replace(/([.?!])(?=[A-ZÁÉÍÓÚÑ¿¡])/g, '$1 ') // "¿…?Decime" → "¿…? Decime" (el modelo a veces pega dos frases)
     .replace(/\s+/g, ' ')
     .trim()
   if (RAZONAMIENTO_FILTRADO.test(x)) return ''
+  x = sinRepetidas(x)
   if (x.length > MAX_VOZ) {
     // se corta en el último final de frase que entre; si no hay, en el último espacio
     const corte = x.slice(0, MAX_VOZ)
