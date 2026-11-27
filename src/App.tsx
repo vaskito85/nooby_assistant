@@ -16,6 +16,7 @@ import * as dichos from './lib/respuestas'
 import { describirImpresoras, elegirImpresora, INFORME_VIGENTE_MS, inferirEstado, ordenarPorRelevancia, type EstadoImpresora, type Impresora, type InformeImpresoras } from './lib/impresoras'
 import { comentarioPorMovimiento, FRASE_HOLA_DE_NUEVO, FRASE_YA_TE_VAS } from './lib/comentarios'
 import { Mirada } from './lib/mirada'
+import { quitarEco } from './lib/eco'
 import { detectarLlamado, esConfirmacion, extraerNota, interpretar, normalizar, type Orden } from './lib/voz'
 import { callar, desbloquear, hablar, sonar, type Sonido } from './lib/audio'
 import { frase, pedirClima, type Clima } from './lib/clima'
@@ -1078,8 +1079,11 @@ export function App() {
 
   // Esperar a que termines: una pausa en medio de la frase no la corta. Lo que va diciendo se junta y recién se atiende cuando pasa
   // un rato sin que hables (ESPERA_FIN_MS).
-  const procesarAtento = (texto: string) => {
+  const procesarAtento = (oido: string) => {
     if (oidoRef.current !== 'atento') return
+    // Si el micrófono pescó la voz de Nooby (eco o respuesta larga), se sacan esas frases y queda solo lo que dijiste vos.
+    const texto = quitarEco(oido, historial.current.filter((h) => h.rol === 'nooby').slice(-2).map((h) => h.texto))
+    if (!texto) return
     if (vistaRef.current && esConfirmacion(texto)) {
       cerrarVista() // con una vista en pantalla, "OK" la cierra
       return

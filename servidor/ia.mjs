@@ -142,6 +142,7 @@ export function instrucciones({ nombre, ciudad, ahora, sentadoMin, memoria = [] 
     'REGLAS: tus respuestas se leen con un parlante, así que contestá en una o dos frases cortas (menos de 30 palabras, salvo que te pidan un resumen o una explicación), sin repetir lo que dijo la persona, sin listas, sin markdown, sin emojis ni símbolos. Escribí los números como se dicen ("las cinco y media", "veinte grados").',
     'Para temporizadores, recordatorios, clima e impresoras usá SIEMPRE las herramientas; nunca digas que hiciste algo sin haberla llamado ni inventes datos del clima o de las impresoras. Para fechas calculá desde la fecha de hoy.',
     `Todo lo que hablan queda guardado en una bitácora (la ve ${nombre} en el panel): podés leerla con las herramientas para contestar "qué hablamos ayer" o "resumime la semana". Conversá de forma natural, como una persona: respondé a lo que dijo, hacé alguna pregunta de vuelta cuando venga bien, y acordate de lo que se habló antes.`,
+    'Respondé directamente con lo que vas a decir, en español: nunca escribas tu razonamiento ni expliques cómo vas a contestar.',
     'Si te piden algo que no podés hacer (por ejemplo prender luces o buscar en internet), decilo con simpatía y ofrecé lo que sí hacés. No inventes. Si no entendiste, pedí que lo repita.',
   ]
     .filter(Boolean)
@@ -179,7 +180,7 @@ export class ErrorIA extends Error {
 }
 
 /** Una vuelta de la API. Traduce los códigos HTTP a tipos de error propios. */
-async function pedir({ fetchFn, clave, modelo, mensajes, herramientas = true }) {
+async function pedir({ fetchFn, clave, modelo, mensajes, herramientas = true, razonamiento = true }) {
   let r
   try {
     r = await fetchFn(process.env.NOOBY_IA_URL || URL_GROQ, {
@@ -189,8 +190,10 @@ async function pedir({ fetchFn, clave, modelo, mensajes, herramientas = true }) 
         model: modelo,
         messages: mensajes,
         ...(herramientas ? { tools: HERRAMIENTAS, tool_choice: 'auto' } : {}),
+        // Los modelos "que razonan" (gpt-oss) piensan antes de contestar: poco esfuerzo y sin devolver ese pensamiento.
+        ...(razonamiento && /gpt-oss/.test(modelo) ? { reasoning_effort: 'low', include_reasoning: false } : {}),
         temperature: 0.6,
-        max_tokens: 300,
+        max_tokens: 1024, // el razonamiento también gasta de acá: si es muy poco la respuesta sale vacía
       }),
       signal: AbortSignal.timeout(20_000),
     })
@@ -230,12 +233,16 @@ export async function charlar({ clave, modelo, historial, contexto, ejecutar, fe
     for (const candidato of [modelo || MODELO_POR_DEFECTO, ...MODELOS_ALTERNATIVOS.filter((x) => x !== modelo)].filter((x, i, v) => v.indexOf(x) === i)) {
       const base = { fetchFn, clave, modelo: candidato, mensajes: msgs }
       try {
-        try {
-          m = await pedir(base)
-        } catch (e) {
-          // Algunos modelos fallan al armar una llamada a herramienta (HTTP 400): ese turno se contesta sin herramientas.
-          if (e instanceof ErrorIA && e.tipo === 'ia' && /HTTP 400/.test(e.detalle)) m = await pedir({ ...base, herramientas: false })
-          else throw e
+        const intentos = [{}, { razonamiento: false }, { razonamiento: false, herramientas: false }]
+        for (let i = 0; i < intentos.length; i++) {
+          try {
+            m = await pedir({ ...base, ...intentos[i] })
+            break
+          } catch (e) {
+            // HTTP 400: la API rechazó algo (los parámetros de razonamiento, o una llamada a herramienta mal armada): se prueba más simple.
+            if (i < intentos.length - 1 && e instanceof ErrorIA && e.tipo === 'ia' && /HTTP 400/.test(e.detalle)) continue
+            throw e
+          }
         }
         modeloUsado = candidato
         break
@@ -256,7 +263,7 @@ export async function charlar({ clave, modelo, historial, contexto, ejecutar, fe
       if (!texto) throw new ErrorIA('ia')
       return { texto, modelo: modeloUsado }
     }
-    msgs.push({ role: 'assistant', content: m.content ?? '', tool_calls: llamadas })
+    msgs.push({ role: 'assistant', content: '', tool_calls: llamadas })
     for (const l of llamadas) {
       let resultado
       try {
@@ -271,16 +278,31 @@ export async function charlar({ clave, modelo, historial, contexto, ejecutar, fe
   throw new ErrorIA('ia')
 }
 
-/** Saca lo que no se puede leer en voz alta: markdown, emojis, viñetas, espacios de más. */
+/** Frases típicas del razonamiento de los modelos que "piensan en voz alta" (en inglés). Si aparecen, esa respuesta no es para leerla. */
+const RAZONAMIENTO_FILTRADO =
+  /\b(the user (asked|said|wants|is asking)|we need to|we should|let'?s (answer|respond|craft|produce)|should respond|the answer should|okay, we|i need to respond)\b/i
+
+/** Tope de lo que se dice en voz alta: mientras Nooby habla el micrófono está apagado, así que respuestas largas dejan sin oído. */
+export const MAX_VOZ = 320
+
+/** Saca lo que no se puede leer en voz alta: markdown, emojis, viñetas, rayas de puntos, espacios de más. Si hay razonamiento filtrado devuelve ''. */
 export function limpiarRespuesta(t) {
-  return String(t ?? '')
+  let x = String(t ?? '')
     .replace(/<think>[\s\S]*?<\/think>/g, '')
     .replace(/[*_`#>~]/g, '')
     .replace(/^\s*[-•]\s+/gm, '')
     .replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/(?:\s*[.…]){3,}/g, '.') // "… … …" o "......" no se leen
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, 600)
+  if (RAZONAMIENTO_FILTRADO.test(x)) return ''
+  if (x.length > MAX_VOZ) {
+    // se corta en el último final de frase que entre; si no hay, en el último espacio
+    const corte = x.slice(0, MAX_VOZ)
+    const punto = Math.max(corte.lastIndexOf('. '), corte.lastIndexOf('? '), corte.lastIndexOf('! '))
+    x = punto > 80 ? corte.slice(0, punto + 1) : corte.slice(0, corte.lastIndexOf(' ')).trim() + '.'
+  }
+  return x
 }
 
 // ---------- oído: transcripción con Whisper (Groq) ----------
@@ -308,6 +330,26 @@ export function armarWav(pcm, frecuencia = FRECUENCIA_PCM) {
   h.write('data', 36)
   h.writeUInt32LE(pcm.length, 40)
   return Buffer.concat([h, pcm])
+}
+
+/**
+ * Sube el volumen del audio si quedó bajito (el micrófono del celu graba flojo cuando estás lejos): lleva el pico a ~80 % del máximo,
+ * con un tope de ganancia (x8) para no inflar el ruido. Devuelve un buffer nuevo; si ya suena fuerte, el mismo.
+ */
+export function normalizarPcm(pcm, objetivo = 0.8, gananciaMax = 8) {
+  let pico = 0
+  for (let i = 0; i + 1 < pcm.length; i += 2) {
+    const v = Math.abs(pcm.readInt16LE(i))
+    if (v > pico) pico = v
+  }
+  if (pico < 200) return pcm // silencio: no se infla
+  const g = Math.min(gananciaMax, (objetivo * 32767) / pico)
+  if (g <= 1.05) return pcm
+  const out = Buffer.alloc(pcm.length)
+  for (let i = 0; i + 1 < pcm.length; i += 2) {
+    out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(pcm.readInt16LE(i) * g))), i)
+  }
+  return out
 }
 
 /** Une los trozos (base64) que mandó el celu. null si no sirven (vacío, muy corto o demasiado largo). */
@@ -347,7 +389,7 @@ export function limpiarTranscripcion(j) {
 export async function transcribir({ clave, pcm, modelo = MODELO_STT, fetchFn = fetch }) {
   if (!clave) throw new ErrorIA('sin_clave')
   const f = new FormData()
-  f.append('file', new Blob([armarWav(pcm)], { type: 'audio/wav' }), 'frase.wav')
+  f.append('file', new Blob([armarWav(normalizarPcm(pcm))], { type: 'audio/wav' }), 'frase.wav')
   f.append('model', modelo)
   f.append('language', 'es')
   f.append('response_format', 'verbose_json')

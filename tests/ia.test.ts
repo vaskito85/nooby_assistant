@@ -144,13 +144,28 @@ describe('charlar', () => {
     let n = 0
     const fetchFn = async (_u: string, init: { body: string }) => {
       cuerpos.push(JSON.parse(init.body))
-      if (n++ === 0) return { ok: false, status: 400, text: async () => '{"error":{"message":"Failed to call a function"}}', json: async () => ({}) }
+      if (n++ < 2) return { ok: false, status: 400, text: async () => '{"error":{"message":"Failed to call a function"}}', json: async () => ({}) }
       return { ok: true, status: 200, text: async () => '', json: async () => ({ choices: [{ message: { content: 'Hola, soy Nooby.' } }] }) }
     }
-    const r = await charlar({ clave: 'k', historial, contexto: ctx, ejecutar: async () => ({}), fetchFn })
+    const r = await charlar({ clave: 'k', modelo: 'openai/gpt-oss-120b', historial, contexto: ctx, ejecutar: async () => ({}), fetchFn })
     expect(r.texto).toBe('Hola, soy Nooby.')
+    // 1.º: con herramientas y sin que devuelva el razonamiento; 2.º: sin esos parámetros; 3.º: sin herramientas
     expect(cuerpos[0].tools).toBeDefined()
-    expect(cuerpos[1].tools).toBeUndefined()
+    expect(cuerpos[0].include_reasoning).toBe(false)
+    expect(cuerpos[1].tools).toBeDefined()
+    expect(cuerpos[1].include_reasoning).toBeUndefined()
+    expect(cuerpos[2].tools).toBeUndefined()
+  })
+
+  it('a los modelos que no razonan no se les mandan parámetros de razonamiento', async () => {
+    const cuerpos: Array<Record<string, unknown>> = []
+    const fetchFn = async (_u: string, init: { body: string }) => {
+      cuerpos.push(JSON.parse(init.body))
+      return { ok: true, status: 200, text: async () => '', json: async () => ({ choices: [{ message: { content: 'Hola.' } }] }) }
+    }
+    await charlar({ clave: 'k', modelo: 'otro-modelo', historial, contexto: ctx, ejecutar: async () => ({}), fetchFn })
+    expect(cuerpos[0].reasoning_effort).toBeUndefined()
+    expect(cuerpos[0].include_reasoning).toBeUndefined()
   })
 
   it('si el modelo ya no existe (404), prueba otro y avisa cuál funcionó', async () => {
