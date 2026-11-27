@@ -75,6 +75,10 @@ export function detectarLlamado(
 }
 
 export type Orden =
+  | 'anotarBitacora'
+  | 'pausarBitacora'
+  | 'retomarBitacora'
+  | 'borrarUltimo'
   | 'tiempoSentado'
   | 'impresoras'
   | 'verCamara'
@@ -100,6 +104,13 @@ export type Orden =
   | 'chau'
   | 'saludo'
 
+const ANOTAR_BITACORA =
+  /\b(anota|anotame|anotar|escribi|escribe|escribime|guarda|guardame|guardar|agrega|agregame|asenta|asentame|deja asentado)\b.{0,30}\b(bitacora|diario)\b/
+const RETOMAR_BITACORA =
+  /\b(segui|seguir|retoma|retomar|reanuda|reanudar|volve|volver)\b.{0,20}\b(guardando|guardar|anotando|anotar|bitacora)\b|\bya (podes|puedes) (guardar|anotar)\b|\b(sali|salir|saca|sacar|termina|terminar|fin)\b.{0,12}\bmodo privado\b/
+const PAUSAR_BITACORA =
+  /\b(no|deja de|dejar de|pausa|pausar|frena|para de)\b.{0,25}\b(guardes|guardar|anotes|anotar|grabes|grabar|registres|registrar)\b|\bpausa\w*\b.{0,15}\bbitacora\b|\bmodo privado\b/
+const BORRAR_ULTIMO = /\b(borra|borrame|elimina|olvida|olvidate)\b.{0,12}\b(lo ultimo|lo anterior|esto ultimo|lo que (acabo de )?(dije|hable))\b/
 const CANCELAR =
   /\b(cancela|cancelar|cancelame|borra|borrar|elimina|eliminar|apaga|apagar|apagame|quita|quitar|deten|detene|detener|anula|anular)\b.*\b(temporizador|temporizadores|timer|recordatorio|recordatorios|alarma|alarmas|aviso|avisos)\b|\bpara (el |la |los |las )?(temporizador|timer|alarma)\b/
 const LISTAR =
@@ -123,6 +134,11 @@ export const pideVerCamara = (t: string) => VERBOS_VER.test(t) && PALABRAS_IMPRE
 export function interpretar(texto: string): Orden | null {
   const t = normalizar(texto)
   if (!t) return null
+  // La bitácora va primero: "anotá en la bitácora que estuve sentado" no es "cuánto llevo sentado".
+  if (ANOTAR_BITACORA.test(t)) return 'anotarBitacora'
+  if (RETOMAR_BITACORA.test(t)) return 'retomarBitacora' // antes que "pausar": "salí del modo privado" también nombra el modo privado
+  if (PAUSAR_BITACORA.test(t)) return 'pausarBitacora'
+  if (BORRAR_ULTIMO.test(t)) return 'borrarUltimo'
   if (/(cuanto|hace cuanto|cuantos minutos).*(sentad|llevo)|\bsentad/.test(t)) return 'tiempoSentado'
   // La consulta va primero: "cuánto falta para el temporizador" y "pará el temporizador" se escriben igual sin tildes.
   if (LISTAR.test(t)) return 'listarAgenda'
@@ -162,6 +178,14 @@ export interface GrupoFrases {
 
 /** Todo lo que se le puede decir a Nooby (después de despertarlo con "che nooby"). */
 export const CATALOGO: GrupoFrases[] = [
+  {
+    orden: 'anotarBitacora',
+    titulo: 'Anotar algo en la bitácora (queda guardado en la PC)',
+    ejemplos: ['anotá en la bitácora que terminé el soporte', 'guardá en el diario que hoy imprimí la A1', 'escribí en la bitácora una idea nueva'],
+  },
+  { orden: 'pausarBitacora', titulo: 'Que no guarde lo que sigue (modo privado)', ejemplos: ['no guardes esto', 'pausá la bitácora', 'modo privado', 'dejá de guardar'] },
+  { orden: 'retomarBitacora', titulo: 'Que vuelva a guardar', ejemplos: ['seguí guardando', 'retomá la bitácora', 'ya podés guardar', 'salí del modo privado'] },
+  { orden: 'borrarUltimo', titulo: 'Borrar lo último que se guardó', ejemplos: ['borrá lo último', 'borrá lo que dije', 'olvidate de lo anterior'] },
   {
     orden: 'temporizador',
     titulo: 'Poner un temporizador (suena una alarma al terminar)',
@@ -211,4 +235,14 @@ export const CATALOGO: GrupoFrases[] = [
 /** ¿Te están diciendo "OK" / "listo" para cerrar un aviso? (se usa mientras suena la alarma de la impresora) */
 export function esConfirmacion(texto: string): boolean {
   return /\b(ok|okey|okay|oka|oke|listo|entendido|gracias|basta|callate|silencio|dale|ya esta|apaga|apagala|apagalo|detene|detenela|detenelo)\b/.test(normalizar(texto))
+}
+
+/** La nota de "anotá en la bitácora que terminé el soporte" → "terminé el soporte". '' si no dijo qué anotar. */
+export function extraerNota(texto: string): string {
+  const t = texto.replace(/\s+/g, ' ').trim()
+  const despues = /\b(?:bit[aá]cora|diario)\b\s*(?:[:,]\s*|que\s+|de que\s+)?(.*)$/i.exec(t)?.[1]?.trim() ?? ''
+  if (despues) return despues.replace(/^(?:lo siguiente|esto)\b[:,]?\s*/i, '').trim()
+  // "anotá que terminé el soporte en la bitácora"
+  const antes = /\b(?:anot[aá]\w*|guard[aá]\w*|escrib[ií]\w*|agreg[aá]\w*|asent[aá]\w*)\s+(?:que\s+)?(.+?)\s+en\s+(?:la|el)\s+(?:bit[aá]cora|diario)\b/i.exec(t)?.[1]
+  return (antes ?? '').trim()
 }

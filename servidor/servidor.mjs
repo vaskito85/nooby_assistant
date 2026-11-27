@@ -13,6 +13,7 @@ import { extname, join, normalize, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { GET as pedirCiudad } from '../api/ciudad.js'
 import { GET as pedirClima } from '../api/clima.js'
+import { crearBitacora, crearMemoria, esDia, claveDia } from './bitacora.mjs'
 import { charlar, describirCodigo, ErrorIA, ERRORES, limpiarMensajes, MODELO_POR_DEFECTO, MODELOS_RETIRADOS, juntarPcm, transcribir } from './ia.mjs'
 
 const RAIZ = fileURLToPath(new URL('..', import.meta.url))
@@ -296,6 +297,10 @@ function revisarAgenda() {
   if (cambio || agenda.length !== antes) guardarAgenda()
 }
 
+// ---------- bitácora y memoria ----------
+const bitacora = crearBitacora(join(CARPETA, 'bitacora'))
+const memoria = crearMemoria(join(CARPETA, 'memoria.json'))
+
 // ---------- charla con IA: herramientas que puede usar ----------
 const claveIA = () => process.env.GROQ_API_KEY || estado.servidor.ia.clave
 const CLAVE_OK = /^[A-Za-z0-9_\-]{10,200}$/
@@ -365,6 +370,22 @@ async function herramientaIA(nombre, a) {
       guardarAgenda()
       return { canceladas: antes - agenda.length }
     }
+    case 'leer_bitacora': {
+      const t = bitacora.rango(String(a.desde ?? ''), a.hasta ? String(a.hasta) : undefined)
+      return t ? { bitacora: t } : { bitacora: '', aviso: 'no hay nada guardado en esas fechas' }
+    }
+    case 'buscar_bitacora': {
+      const r = bitacora.buscar(String(a.texto ?? ''), 20)
+      return { resultados: r.map((e) => `[${e.dia} ${e.hora}] ${e.rol === 'nooby' ? 'Nooby' : e.rol === 'nota' ? 'Nota' : e.quien || 'Yo'}: ${e.texto}`) }
+    }
+    case 'anotar_en_bitacora':
+      if (!bitacora.anotar('nota', String(a.texto ?? ''))) throw new Error('falta el texto')
+      return { ok: true }
+    case 'recordar_dato':
+      if (!memoria.agregar(String(a.texto ?? ''))) throw new Error('falta el dato')
+      return { ok: true }
+    case 'olvidar_dato':
+      return { olvidados: memoria.olvidar(String(a.texto ?? '')) }
     case 'ver_clima': {
       const { lat, lon, ciudad } = estado.config
       const r = await pedirClima(new Request(`http://local/api/clima?lat=${lat}&lon=${lon}`))
@@ -704,6 +725,54 @@ async function manejar(req, res) {
     }
   }
 
+  if (ruta === '/api/bitacora') {
+    // Lo usan la cara (para guardar lo que se habla) y el panel (para verlo). Solo por localhost.
+    if (req.method === 'POST') {
+      if (!String(req.headers['content-type']).includes('application/json')) return json(res, 415, { error: 'usá application/json' })
+      try {
+        const c = JSON.parse(await leerCuerpo(req))
+        const ok = bitacora.anotar(String(c.rol), c.texto, estado.config.nombre)
+        return json(res, ok ? 200 : 400, ok ? { ok: true } : { error: 'rol (yo|nooby|nota) y texto' })
+      } catch {
+        return json(res, 400, { error: 'JSON inválido' })
+      }
+    }
+    if (req.method === 'GET') {
+      const dia = url.searchParams.get('dia')
+      const q = url.searchParams.get('q')
+      if (q != null) return json(res, 200, { resultados: bitacora.buscar(q, 60) })
+      if (dia == null) return json(res, 200, { hoy: claveDia(), dias: bitacora.dias() })
+      if (!esDia(dia)) return json(res, 400, { error: 'dia con formato AAAA-MM-DD' })
+      if (url.searchParams.get('formato') === 'md') {
+        const md = bitacora.markdown(dia)
+        if (md == null) return json(res, 404, { error: 'no hay bitácora de ese día' })
+        res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8', 'content-disposition': `attachment; filename="bitacora-${dia}.md"` })
+        return res.end(md)
+      }
+      return json(res, 200, { dia, entradas: bitacora.entradas(dia) })
+    }
+    if (req.method === 'DELETE') {
+      const dia = url.searchParams.get('dia')
+      if (url.searchParams.get('ultimas') != null) return json(res, 200, { quitadas: bitacora.quitarUltimas(Math.min(10, Math.max(1, Number(url.searchParams.get('ultimas')) || 2))) })
+      if (!esDia(dia)) return json(res, 400, { error: 'dia con formato AAAA-MM-DD' })
+      return json(res, 200, { borrado: bitacora.borrarDia(dia) })
+    }
+  }
+
+  if (ruta === '/api/memoria') {
+    if (req.method === 'GET') return json(res, 200, { datos: memoria.listar() })
+    if (req.method === 'POST') {
+      if (!String(req.headers['content-type']).includes('application/json')) return json(res, 415, { error: 'usá application/json' })
+      try {
+        const item = memoria.agregar(JSON.parse(await leerCuerpo(req)).texto)
+        return json(res, item ? 200 : 400, item ? { ok: true, dato: item } : { error: 'falta texto' })
+      } catch {
+        return json(res, 400, { error: 'JSON inválido' })
+      }
+    }
+    if (req.method === 'DELETE') return json(res, 200, { borrados: memoria.borrarId(String(url.searchParams.get('id') ?? '')) })
+  }
+
   if (ruta === '/api/ia') {
     // Nunca devuelve la clave: solo si hay una y qué modelo se usa.
     if (req.method === 'GET') return json(res, 200, { configurada: Boolean(claveIA()), entorno: Boolean(process.env.GROQ_API_KEY), modelo: estado.servidor.ia.modelo, whisper: estado.servidor.ia.whisper !== false })
@@ -775,6 +844,7 @@ async function manejar(req, res) {
           ciudad: estado.config.ciudad,
           ahora: new Date(),
           sentadoMin: num(c.sentadoMin, 0, 1440, 0),
+          memoria: memoria.listar().map((m) => m.texto),
         },
         ejecutar: herramientaIA,
       })

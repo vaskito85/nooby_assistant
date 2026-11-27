@@ -280,3 +280,80 @@ export async function transcribirAudio(pcm: string[]): Promise<string | null> {
   const j = (await r.json()) as { texto?: string; error?: string }
   return typeof j.texto === 'string' ? j.texto : null
 }
+
+// ---------- bitácora y memoria (archivos en la PC) ----------
+export interface EntradaBitacora {
+  hora: string
+  rol: 'yo' | 'nooby' | 'nota'
+  quien: string
+  texto: string
+}
+export interface ResultadoBitacora extends EntradaBitacora {
+  dia: string
+}
+
+/** Guarda una línea de lo que se habló (o una nota). Si falla no pasa nada: la charla sigue. */
+export async function guardarBitacora(rol: 'yo' | 'nooby' | 'nota', texto: string): Promise<boolean> {
+  try {
+    const r = await fetch('/api/bitacora', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ rol, texto }),
+    })
+    return r.ok
+  } catch {
+    return false
+  }
+}
+
+/** Borra las últimas entradas de hoy (por defecto el último intercambio: lo que dijiste y lo que contestó). */
+export async function quitarUltimasBitacora(cuantas = 2): Promise<number> {
+  const r = await fetch('/api/bitacora?ultimas=' + cuantas, { method: 'DELETE' })
+  if (!r.ok) throw new Error('bitácora ' + r.status)
+  return ((await r.json()) as { quitadas: number }).quitadas
+}
+
+export async function leerDiasBitacora(): Promise<{ hoy: string; dias: { dia: string; entradas: number }[] }> {
+  const r = await fetch('/api/bitacora', { cache: 'no-store' })
+  if (!r.ok) throw new Error('bitácora ' + r.status)
+  return r.json()
+}
+
+export async function leerDiaBitacora(dia: string): Promise<EntradaBitacora[]> {
+  const r = await fetch('/api/bitacora?dia=' + encodeURIComponent(dia), { cache: 'no-store' })
+  if (!r.ok) throw new Error('bitácora ' + r.status)
+  return ((await r.json()) as { entradas: EntradaBitacora[] }).entradas
+}
+
+export async function buscarBitacora(q: string): Promise<ResultadoBitacora[]> {
+  const r = await fetch('/api/bitacora?q=' + encodeURIComponent(q), { cache: 'no-store' })
+  if (!r.ok) throw new Error('bitácora ' + r.status)
+  return ((await r.json()) as { resultados: ResultadoBitacora[] }).resultados
+}
+
+export async function borrarDiaBitacora(dia: string): Promise<void> {
+  const r = await fetch('/api/bitacora?dia=' + encodeURIComponent(dia), { method: 'DELETE' })
+  if (!r.ok) throw new Error('bitácora ' + r.status)
+}
+
+export interface DatoMemoria {
+  id: string
+  texto: string
+  creado: number
+}
+
+export async function leerMemoria(): Promise<DatoMemoria[]> {
+  const r = await fetch('/api/memoria', { cache: 'no-store' })
+  if (!r.ok) throw new Error('memoria ' + r.status)
+  return ((await r.json()) as { datos: DatoMemoria[] }).datos
+}
+
+export async function agregarMemoria(texto: string): Promise<void> {
+  const r = await fetch('/api/memoria', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ texto }) })
+  if (!r.ok) throw new Error('memoria ' + r.status)
+}
+
+export async function borrarMemoria(id: string): Promise<void> {
+  const r = await fetch('/api/memoria?id=' + encodeURIComponent(id), { method: 'DELETE' })
+  if (!r.ok) throw new Error('memoria ' + r.status)
+}

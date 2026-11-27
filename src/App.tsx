@@ -16,12 +16,12 @@ import * as dichos from './lib/respuestas'
 import { describirImpresoras, elegirImpresora, INFORME_VIGENTE_MS, inferirEstado, ordenarPorRelevancia, type EstadoImpresora, type Impresora, type InformeImpresoras } from './lib/impresoras'
 import { comentarioPorMovimiento, FRASE_HOLA_DE_NUEVO, FRASE_YA_TE_VAS } from './lib/comentarios'
 import { Mirada } from './lib/mirada'
-import { detectarLlamado, esConfirmacion, interpretar, normalizar, type Orden } from './lib/voz'
+import { detectarLlamado, esConfirmacion, extraerNota, interpretar, normalizar, type Orden } from './lib/voz'
 import { callar, desbloquear, hablar, sonar, type Sonido } from './lib/audio'
 import { frase, pedirClima, type Clima } from './lib/clima'
 import { escenaClima } from './lib/escenas'
 import { aplicarRemota, cargarAjustes, guardarAjustes, limpiarLlamadas, temaConfig, type Ajustes } from './lib/config'
-import { charlarIA, transcribirAudio, conectarLocal, estadoLocal, cancelarAgendaServidor, cancelarPedidoFoto, crearAgenda, guardarConfigLocal, leerAgenda, leerImpresoras, pedirFoto, urlFoto, type AgendaItem } from './lib/canalLocal'
+import { guardarBitacora, quitarUltimasBitacora, charlarIA, transcribirAudio, conectarLocal, estadoLocal, cancelarAgendaServidor, cancelarPedidoFoto, crearAgenda, guardarConfigLocal, leerAgenda, leerImpresoras, pedirFoto, urlFoto, type AgendaItem } from './lib/canalLocal'
 import { conectarNtfy } from './lib/ntfy'
 import { Presencia } from './lib/presencia'
 import { Sentado } from './lib/sentado'
@@ -34,6 +34,7 @@ declare global {
 }
 
 const MIN = 60_000
+const ATENTO_CHARLA_MS = 30_000 // atento tras una charla con la IA
 const HISTORIAL_MAX = 10 // mensajes que se le mandan a la IA como contexto
 const HISTORIAL_VIDA_MS = 5 * 60_000 // pasado este silencio, la conversación empieza de cero
 const ESPERA_FIN_MS = 1000 // tras una pausa, espera esto antes de dar por terminada tu frase
@@ -68,6 +69,7 @@ type Vista =
 type Dialogo =
   | { tipo: 'temporizador'; intentos: number }
   | { tipo: 'recordatorio'; texto?: string; cuando?: number; intentos: number }
+  | { tipo: 'nota' }
 
 interface Aviso {
   texto: string
@@ -514,10 +516,22 @@ export function App() {
   }, [nota])
 
   // ---------- voz: "che nooby" + pedidos ----------
-  const mantenerAtento = (ms = 10_000) => {
+  // Conversando (la IA ya contestó) se queda escuchando más rato, sin pedir "che nooby" en cada frase.
+  const conversando = useRef(false)
+  // Modo privado: mientras está activo no se guarda nada en la bitácora. Se corta al dormirse o con "seguí guardando".
+  const bitacoraPausada = useRef(false)
+  const saltarGuardado = useRef(0)
+  const [privado, setPrivado] = useState(false)
+  const ponerPrivado = (v: boolean) => {
+    bitacoraPausada.current = v
+    setPrivado(v)
+  }
+  const mantenerAtento = (ms = conversando.current ? ATENTO_CHARLA_MS : 10_000) => {
     if (timerAtento.current) window.clearTimeout(timerAtento.current)
     timerAtento.current = window.setTimeout(() => {
       setOido((o) => (o === 'atento' ? 'listo' : o))
+      conversando.current = false
+      ponerPrivado(false)
       dialogoRef.current = null
     }, ms)
   }
@@ -530,6 +544,14 @@ export function App() {
     const ahora = Date.now()
     if (historial.current.length > 0 && ahora - historial.current[historial.current.length - 1].en > HISTORIAL_VIDA_MS) historial.current = []
     historial.current = [...historial.current, { rol, texto, en: ahora }].slice(-HISTORIAL_MAX)
+    // Lo que se habla queda en la bitácora de la PC (salvo modo privado).
+    if (saltarGuardado.current > 0 && rol === 'nooby') saltarGuardado.current--
+    else if (!bitacoraPausada.current) void guardarBitacora(rol, texto)
+  }
+  /** Contesta sin dejar la respuesta en la bitácora ("Anotado.", "Listo, borré lo último"). */
+  const responderSinGuardar = (texto: string) => {
+    saltarGuardado.current++
+    responder(texto)
   }
   const responder = (texto: string) => {
     anotar('nooby', texto)
@@ -616,6 +638,12 @@ export function App() {
       responder('Bueno, lo dejamos.')
       return true
     }
+    // Esperaba qué anotar: todo lo que diga es la nota.
+    if (d.tipo === 'nota') {
+      dialogoRef.current = null
+      void guardarNota(texto)
+      return true
+    }
     // Un pedido claro y nuevo ("poneme un temporizador", "qué recordatorios tengo") corta la pregunta pendiente y se atiende.
     const nuevo = interpretar(texto)
     if (nuevo && ['temporizador', 'recordatorio', 'listarAgenda', 'cancelarAgenda', 'faltaPara', 'chau', 'despedida'].includes(nuevo)) {
@@ -647,6 +675,11 @@ export function App() {
     d.intentos++
     preguntar(d.tipo === 'temporizador' ? '¿Cómo? ¿De cuánto tiempo?' : '¿Cómo? ¿Para cuándo?', d)
     return true
+  }
+
+  const guardarNota = async (nota: string) => {
+    const ok = await guardarBitacora('nota', nota)
+    responderSinGuardar(ok ? 'Anotado.' : 'No pude guardarlo en la bitácora.')
   }
 
   const contarCuantoFalta = async (texto: string) => {
@@ -787,6 +820,25 @@ export function App() {
         agua.current.descansar()
         responder(`Muy bien, ${nombre}. Hay que tomar agua.`)
         break
+      case 'anotarBitacora': {
+        const nota = extraerNota(texto)
+        if (nota) void guardarNota(nota)
+        else preguntar('¿Qué querés que anote?', { tipo: 'nota' })
+        break
+      }
+      case 'pausarBitacora':
+        ponerPrivado(true)
+        responder('Listo, no guardo lo que sigue. Decime «seguí guardando» cuando quieras.')
+        break
+      case 'retomarBitacora':
+        ponerPrivado(false)
+        responder('Perfecto, vuelvo a guardar.')
+        break
+      case 'borrarUltimo':
+        void quitarUltimasBitacora(2)
+          .then((n) => responderSinGuardar(n > 0 ? 'Listo, borré lo último de la bitácora.' : 'No hay nada para borrar.'))
+          .catch(() => responderSinGuardar('No pude borrarlo.'))
+        break
       case 'temporizador':
         void hacerTemporizador(texto)
         break
@@ -892,7 +944,8 @@ export function App() {
       if (r.error === 'sin_clave') return noEntendi()
       responder(r.texto)
       void refrescarAgenda() // por si la IA puso o canceló un temporizador o recordatorio
-      mantenerAtento(15_000)
+      conversando.current = true // modo conversación: sigue escuchando sin que lo despiertes de nuevo
+      mantenerAtento()
     } catch {
       setNota('')
       noEntendi()
@@ -900,12 +953,13 @@ export function App() {
   }
 
   const atender = (texto: string) => {
+    const orden = interpretar(texto)
+    // Lo que decís queda en la bitácora (también las respuestas a una pregunta), salvo estos pedidos y las notas.
+    if (orden !== 'pausarBitacora' && orden !== 'borrarUltimo' && dialogoRef.current?.tipo !== 'nota') anotar('yo', texto)
     if (dialogoRef.current && continuarDialogo(texto)) {
       mantenerAtento(15_000)
       return
     }
-    anotar('yo', texto)
-    const orden = interpretar(texto)
     if (!orden) {
       void charlarLibre(texto)
       return
@@ -913,6 +967,8 @@ export function App() {
     ejecutar(orden, texto)
     if (orden === 'chau' || orden === 'despedida') {
       if (timerAtento.current) window.clearTimeout(timerAtento.current)
+      conversando.current = false
+      ponerPrivado(false)
       setOido('listo')
     } else {
       mantenerAtento()
@@ -1246,6 +1302,7 @@ export function App() {
                     ? 'Descansando…'
                     : 'Mirando…'}
               {cuentaRegresiva}
+              {privado && ' · 🔒 privado'}
             </p>
 
             <p className={`zona-oyendo${oyendo?.final ? ' final' : ''}`} aria-live="polite">

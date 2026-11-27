@@ -7,6 +7,16 @@ import {
   leerImpresoras,
   leerRed,
   estadoLocal,
+  agregarMemoria,
+  borrarDiaBitacora,
+  borrarMemoria,
+  buscarBitacora,
+  leerDiaBitacora,
+  leerDiasBitacora,
+  leerMemoria,
+  type DatoMemoria,
+  type EntradaBitacora,
+  type ResultadoBitacora,
   charlarIA,
   guardarIA,
   leerIA,
@@ -22,7 +32,7 @@ import { describirImpresoras, type InformeImpresoras } from './lib/impresoras'
 import { enviarNtfy } from './lib/ntfy'
 import { CATALOGO } from './lib/voz'
 
-type Seccion = 'inicio' | 'ajustes' | 'voz' | 'ia' | 'red' | 'frases' | 'avanzado'
+type Seccion = 'inicio' | 'ajustes' | 'voz' | 'ia' | 'bitacora' | 'red' | 'frases' | 'avanzado'
 
 function temaNuevo() {
   const b = new Uint8Array(12)
@@ -54,6 +64,15 @@ export function Panel() {
   const [modeloIa, setModeloIa] = useState('')
   const [notaIa, setNotaIa] = useState('')
   const [seccion, setSeccion] = useState<Seccion>(() => (sessionStorage.getItem('nooby-panel') as Seccion | null) ?? 'inicio')
+  // Bitácora y memoria
+  const [diasBit, setDiasBit] = useState<{ dia: string; entradas: number }[]>([])
+  const [diaSel, setDiaSel] = useState<string | null>(null)
+  const [entradasBit, setEntradasBit] = useState<EntradaBitacora[]>([])
+  const [busqueda, setBusqueda] = useState('')
+  const [resultadosBit, setResultadosBit] = useState<ResultadoBitacora[] | null>(null)
+  const [datosMem, setDatosMem] = useState<DatoMemoria[]>([])
+  const [nuevoDato, setNuevoDato] = useState('')
+  const [notaBit, setNotaBit] = useState('')
   const irA = (s: Seccion) => {
     setSeccion(s)
     sessionStorage.setItem('nooby-panel', s)
@@ -144,6 +163,64 @@ export function Panel() {
       .catch(() => undefined)
   }, [modo])
 
+  const cargarBitacora = async (elegir?: string) => {
+    try {
+      const { hoy, dias } = await leerDiasBitacora()
+      setDiasBit(dias)
+      const dia = elegir ?? diaSel ?? (dias.find((d) => d.dia === hoy) ?? dias[0])?.dia ?? null
+      setDiaSel(dia)
+      setEntradasBit(dia ? await leerDiaBitacora(dia) : [])
+      setDatosMem(await leerMemoria())
+    } catch (e) {
+      setNotaBit(`No pude leer la bitácora: ${e instanceof Error ? e.message : 'error'}`)
+    }
+  }
+  useEffect(() => {
+    if (modo === 'local' && seccion === 'bitacora') void cargarBitacora()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modo, seccion])
+
+  const buscarEnBitacora = async () => {
+    if (!busqueda.trim()) {
+      setResultadosBit(null)
+      return
+    }
+    try {
+      setResultadosBit(await buscarBitacora(busqueda))
+    } catch (e) {
+      setNotaBit(`No pude buscar: ${e instanceof Error ? e.message : 'error'}`)
+    }
+  }
+  const borrarDia = async (dia: string) => {
+    if (!window.confirm(`¿Borrar la bitácora del ${dia}? No se puede deshacer.`)) return
+    try {
+      await borrarDiaBitacora(dia)
+      setDiaSel(null)
+      setNotaBit('Día borrado.')
+      await cargarBitacora()
+    } catch (e) {
+      setNotaBit(`No pude borrar: ${e instanceof Error ? e.message : 'error'}`)
+    }
+  }
+  const sumarDato = async () => {
+    if (!nuevoDato.trim()) return
+    try {
+      await agregarMemoria(nuevoDato)
+      setNuevoDato('')
+      setDatosMem(await leerMemoria())
+    } catch (e) {
+      setNotaBit(`No pude guardar el dato: ${e instanceof Error ? e.message : 'error'}`)
+    }
+  }
+  const sacarDato = async (id: string) => {
+    try {
+      await borrarMemoria(id)
+      setDatosMem(await leerMemoria())
+    } catch (e) {
+      setNotaBit(`No pude borrar el dato: ${e instanceof Error ? e.message : 'error'}`)
+    }
+  }
+
   const guardarClaveIa = async (cambio: { clave?: string; modelo?: string; borrar?: boolean; whisper?: boolean }) => {
     try {
       const i = await guardarIA(cambio)
@@ -224,6 +301,7 @@ export function Panel() {
     { id: 'ajustes', icono: '⚙️', nombre: 'Ajustes' },
     { id: 'voz', icono: '🎙️', nombre: 'Despertar' },
     { id: 'ia', icono: '✨', nombre: 'Charla IA' },
+    { id: 'bitacora', icono: '📓', nombre: 'Bitácora' },
     { id: 'red', icono: '🖨️', nombre: 'Impresoras' },
     { id: 'frases', icono: '💬', nombre: 'Qué decirle' },
     { id: 'avanzado', icono: '🧰', nombre: 'Avanzado' },
@@ -499,6 +577,127 @@ export function Panel() {
                       )}
                     </div>
                     {notaIa && <p className="pn-nota">{notaIa}</p>}
+                  </div>
+                </>
+              ) : (
+                <div className="pn-tarjeta">{soloUsb}</div>
+              )}
+            </>
+          )}
+
+          {seccion === 'bitacora' && (
+            <>
+              <h2 className="pn-titulo">Bitácora y memoria</h2>
+              {local ? (
+                <>
+                  <div className="pn-tarjeta">
+                    <p>
+                      Todo lo que hablás con Nooby (después de despertarlo) queda guardado acá, en la PC, un archivo por día en{' '}
+                      <code>~/.nooby/bitacora</code>. Por voz: «anotá en la bitácora que…», «no guardes esto» (modo privado), «borrá lo último», y
+                      preguntale «qué hablamos ayer» o «resumime la semana».
+                    </p>
+                    {notaBit && <p className="pn-nota">{notaBit}</p>}
+                  </div>
+
+                  <div className="pn-tarjeta">
+                    <h3>Buscar</h3>
+                    <div className="pn-fila pn-busca">
+                      <input
+                        className="pn-input"
+                        value={busqueda}
+                        placeholder="ej: H2C, soporte, Juan…"
+                        onChange={(e) => setBusqueda(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && void buscarEnBitacora()}
+                      />
+                      <button className="pn-btn secundario" onClick={() => void buscarEnBitacora()}>
+                        Buscar
+                      </button>
+                    </div>
+                    {resultadosBit && (
+                      <div className="pn-bit-lista">
+                        {resultadosBit.length === 0 && <p className="pn-ayuda">No encontré nada.</p>}
+                        {resultadosBit.map((r, i) => (
+                          <button key={i} className="pn-bit-fila" onClick={() => (setResultadosBit(null), void cargarBitacora(r.dia))}>
+                            <small>
+                              {r.dia} {r.hora}
+                            </small>
+                            <span>{r.texto}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pn-tarjeta">
+                    <h3>Días</h3>
+                    {diasBit.length === 0 ? (
+                      <p className="pn-ayuda">Todavía no hay nada guardado. Despertá a Nooby y charlá un rato.</p>
+                    ) : (
+                      <div className="pn-fichas">
+                        {diasBit.map((d) => (
+                          <button
+                            key={d.dia}
+                            className="pn-ficha"
+                            aria-pressed={diaSel === d.dia}
+                            onClick={() => void cargarBitacora(d.dia)}
+                          >
+                            {d.dia} · {d.entradas}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {diaSel && (
+                      <>
+                        <div className="pn-bit-lista">
+                          {entradasBit.map((e, i) => (
+                            <div key={i} className="pn-bit-entrada" data-rol={e.rol}>
+                              <small>{e.hora}</small>
+                              <b>{e.rol === 'nota' ? '📝 Nota' : e.rol === 'nooby' ? 'Nooby' : e.quien || 'Yo'}</b>
+                              <span>{e.texto}</span>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="pn-fila">
+                          <a className="pn-btn secundario" href={`/api/bitacora?dia=${encodeURIComponent(diaSel)}&formato=md`} download>
+                            ⬇ Descargar (.md)
+                          </a>
+                          <button className="pn-btn peligro" onClick={() => void borrarDia(diaSel)}>
+                            Borrar este día
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="pn-tarjeta">
+                    <h3>Memoria de Nooby</h3>
+                    <p className="pn-ayuda">
+                      Datos que Nooby recuerda siempre ("acordate de que mi hermano se llama Pablo"). Se los podés pedir por voz o cargarlos acá.
+                    </p>
+                    {datosMem.length === 0 ? (
+                      <p className="pn-ayuda">No recuerda nada todavía.</p>
+                    ) : (
+                      <div className="pn-fichas">
+                        {datosMem.map((m) => (
+                          <button key={m.id} className="pn-ficha" onClick={() => void sacarDato(m.id)} title="Olvidar">
+                            {m.texto} ✕
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <div className="pn-fila pn-busca">
+                      <input
+                        className="pn-input"
+                        value={nuevoDato}
+                        maxLength={300}
+                        placeholder="Algo para que recuerde…"
+                        onChange={(e) => setNuevoDato(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && void sumarDato()}
+                      />
+                      <button className="pn-btn primario" onClick={() => void sumarDato()}>
+                        Agregar
+                      </button>
+                    </div>
                   </div>
                 </>
               ) : (

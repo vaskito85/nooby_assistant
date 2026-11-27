@@ -8,7 +8,7 @@ export const MODELOS_ALTERNATIVOS = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b'
 /** Modelos que Groq ya dio de baja: si quedaron guardados se reemplazan solos. */
 export const MODELOS_RETIRADOS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']
 export const URL_GROQ = 'https://api.groq.com/openai/v1/chat/completions'
-const MAX_VUELTAS = 4
+const MAX_VUELTAS = 6
 const MAX_MENSAJES = 12
 const MAX_TEXTO = 500
 
@@ -71,6 +71,54 @@ export const HERRAMIENTAS = [
   },
   {
     type: 'function',
+    function: {
+      name: 'leer_bitacora',
+      description:
+        'Lee la bitácora: lo que se habló con Nooby y las notas guardadas, de un día o de un rango de días (máximo 14). Usala para "qué hablamos ayer", "resumime la semana", "en qué quedamos".',
+      parameters: {
+        type: 'object',
+        properties: {
+          desde: { type: 'string', description: 'Primer día, formato AAAA-MM-DD.' },
+          hasta: { type: 'string', description: 'Último día, AAAA-MM-DD (opcional; si falta es el mismo día).' },
+        },
+        required: ['desde'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'buscar_bitacora',
+      description: 'Busca una palabra o frase en toda la bitácora ("cuándo hablamos de la H2C").',
+      parameters: { type: 'object', properties: { texto: { type: 'string' } }, required: ['texto'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'anotar_en_bitacora',
+      description: 'Guarda una nota o idea en la bitácora de hoy, cuando te piden "anotá", "guardá esto" o "dejá asentado".',
+      parameters: { type: 'object', properties: { texto: { type: 'string', description: 'La nota, clara y completa.' } }, required: ['texto'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'recordar_dato',
+      description: 'Guarda un dato para recordarlo siempre en futuras charlas ("acordate de que mi hermano se llama Pablo").',
+      parameters: { type: 'object', properties: { texto: { type: 'string', description: 'El dato, como frase completa.' } }, required: ['texto'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'olvidar_dato',
+      description: 'Borra de la memoria los datos que contengan ese texto ("olvidate de lo de mi hermano").',
+      parameters: { type: 'object', properties: { texto: { type: 'string' } }, required: ['texto'] },
+    },
+  },
+  {
+    type: 'function',
     function: { name: 'ver_clima', description: 'Clima actual y pronóstico de hoy en la ciudad del usuario.', parameters: { type: 'object', properties: {} } },
   },
   {
@@ -84,14 +132,16 @@ export const HERRAMIENTAS = [
 ]
 
 /** Lo que Nooby "sabe" de entrada: quién es, con quién habla y cómo tiene que contestar (se lee en voz alta). */
-export function instrucciones({ nombre, ciudad, ahora, sentadoMin }) {
+export function instrucciones({ nombre, ciudad, ahora, sentadoMin, memoria = [] }) {
   const fecha = new Intl.DateTimeFormat('es-AR', { dateStyle: 'full', timeStyle: 'short', hour12: false }).format(ahora)
   return [
     `Sos Nooby, el asistente con cara de ${nombre}, que vive en un celu viejo sobre su escritorio y le habla en voz alta. Hablás en español rioplatense, de vos, con calidez y algo de humor, como una persona.`,
     `Hoy es ${fecha} (hora de Argentina). Vive en ${ciudad}.`,
     sentadoMin > 0 ? `${nombre} lleva ${sentadoMin} minutos sentado.` : '',
+    memoria.length > 0 ? `Cosas que ${nombre} te pidió recordar:\n${memoria.map((m) => `- ${m}`).join('\n')}` : '',
     'REGLAS: tus respuestas se leen con un parlante, así que contestá en una o dos frases cortas, sin listas, sin markdown, sin emojis ni símbolos. Escribí los números como se dicen ("las cinco y media", "veinte grados").',
     'Para temporizadores, recordatorios, clima e impresoras usá SIEMPRE las herramientas; nunca digas que hiciste algo sin haberla llamado ni inventes datos del clima o de las impresoras. Para fechas calculá desde la fecha de hoy.',
+    `Todo lo que hablan queda guardado en una bitácora (la ve ${nombre} en el panel): podés leerla con las herramientas para contestar "qué hablamos ayer" o "resumime la semana". Conversá de forma natural, como una persona: respondé a lo que dijo, hacé alguna pregunta de vuelta cuando venga bien, y acordate de lo que se habló antes.`,
     'Si te piden algo que no podés hacer (por ejemplo prender luces o buscar en internet), decilo con simpatía y ofrecé lo que sí hacés. No inventes. Si no entendiste, pedí que lo repita.',
   ]
     .filter(Boolean)
@@ -215,7 +265,7 @@ export async function charlar({ clave, modelo, historial, contexto, ejecutar, fe
       } catch (e) {
         resultado = { error: e instanceof Error ? e.message : 'falló' }
       }
-      msgs.push({ role: 'tool', tool_call_id: l.id, content: JSON.stringify(resultado).slice(0, 2000) })
+      msgs.push({ role: 'tool', tool_call_id: l.id, content: JSON.stringify(resultado).slice(0, 9000) })
     }
   }
   throw new ErrorIA('ia')

@@ -129,7 +129,7 @@ describe('charlar', () => {
   it('corta si la IA se queda pidiendo herramientas para siempre', async () => {
     const { fetchFn, pedidos } = falso([{ message: { tool_calls: [{ id: 'd', function: { name: 'ver_agenda', arguments: '{}' } }] } }])
     await expect(charlar({ clave: 'k', historial, contexto: ctx, ejecutar: async () => ({}), fetchFn })).rejects.toBeInstanceOf(ErrorIA)
-    expect(pedidos.length).toBeLessThanOrEqual(4)
+    expect(pedidos.length).toBeLessThanOrEqual(6)
   })
 
   it('traduce los errores HTTP', async () => {

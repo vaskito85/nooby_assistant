@@ -53,7 +53,7 @@ jobs:
       - name: Armar el paquete de la PC
         run: |
           mkdir -p paquete/servidor paquete/api
-          cp servidor/servidor.mjs servidor/ia.mjs paquete/servidor/
+          cp servidor/*.mjs paquete/servidor/
           cp api/*.js paquete/api/
           cp -r dist paquete/dist
           echo '{ "name": "nooby", "private": true, "type": "module" }' > paquete/package.json

@@ -23,6 +23,20 @@
 ## Hecho (v0.3.2)
 - [x] Palabra clave con gramática cerrada (llamado/libre) y freno automático de la cámara
 
+## Hecho (v0.9.0)
+- [x] Bitácora (cada charla queda en ~/.nooby/bitacora/AAAA-MM-DD.md, modo privado, notas por voz, panel con búsqueda/descarga/borrado), memoria de datos y modo conversación (30 s atento sin repetir "che nooby")
+
+## Pendiente (orden acordado)
+- [ ] Buen día / buenas noches con resumen (agenda, clima, impresoras)
+- [ ] Notas y lista de compras
+- [ ] Impresoras: cuánto falta, avisos por porcentaje, historial
+- [ ] Modo foco (pomodoro)
+- [ ] Despertador y recordatorios repetidos
+- [ ] Dólar, cuentas y conversiones
+- [ ] Reporte de sentado y pausas activas
+- [ ] Poder interrumpir a Nooby mientras habla (cancelación de eco en el APK)
+- [ ] Controlar la PC / luces (lista corta de acciones permitidas)
+
 ## Hecho (v0.8.0)
 - [x] Oído con Whisper: el APK (0.5.0) usa un micrófono propio, guarda el audio de cada frase y lo manda a la web (evento nooby-audio); el servidor lo transcribe con Whisper de Groq (/api/transcribir) y la web usa ese texto en vez del de Vosk. Vosk sigue para "che nooby" y como respaldo
 
