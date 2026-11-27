@@ -44,7 +44,7 @@ Web app de una pantalla (Vite + React + TS) que se muestra en un celu viejo (Gal
   costado (`PanelImpresora` / `PanelClima`) hasta el OK (botón o voz) o 5 min. Clima: `escenaClima(codigo WMO, esDia)` → sol, luna, solNubes, lunaNubes, nubes, niebla, lluvia, tormenta,
   nieve (SVG con SMIL, animaciones lentas). Impresoras: solo si hay un informe fresco (si no, lo dice sin dibujo). Prioridad de pantalla: alarma de impresora > vista > cara.
 - **Pedidos por voz**: `CATALOGO` en `lib/voz.ts` es la lista de todo lo que entiende (18 grupos: hora, fecha, clima, impresoras, cuánto llevás sentado, charla, chistes,
-  repetir, despedirse…). `interpretar()` es la primera regla que coincide (el orden importa); `tests/frases.test.ts` comprueba que CADA ejemplo del catálogo se entienda,
+  repetir, despedirse…). `interpretar()` es la primera regla que coincide (el orden importa); **precisión (v0.10.1)**: los pedidos con verbo claro (temporizador, recordame, anotá…) aguantan hasta 14 palabras, las preguntas sueltas (hora, clima, impresoras con palabra de estado…) solo en frases cortas (≤7; ≤5 las charlas tipo "cómo estás"), y "gracias/chau/listo" solo solas (≤3): lo demás es charla y va a la IA (`tests/charla-no-pedidos.test.ts` lista frases que NO deben disparar pedidos); `tests/frases.test.ts` comprueba que CADA ejemplo del catálogo se entienda,
   así la lista del panel ("Qué le puedo decir a Nooby") nunca miente. Respuestas en `lib/respuestas.ts` (puras; el azar se inyecta). Para agregar un pedido: regla en
   `interpretar`, entrada en `CATALOGO`, caso en `ejecutar` de App.tsx.
 - **Entrenar la frase de despertar**: el modelo no conoce "nooby", así que se le enseña con tu voz. Panel > "3. Despertar a Nooby" > "Entrenar con mi voz":

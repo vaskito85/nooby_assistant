@@ -139,7 +139,7 @@ export function instrucciones({ nombre, ciudad, ahora, sentadoMin, memoria = [] 
     `Hoy es ${fecha} (hora de Argentina). Vive en ${ciudad}.`,
     sentadoMin > 0 ? `${nombre} lleva ${sentadoMin} minutos sentado.` : '',
     memoria.length > 0 ? `Cosas que ${nombre} te pidió recordar:\n${memoria.map((m) => `- ${m}`).join('\n')}` : '',
-    'REGLAS: tus respuestas se leen con un parlante, así que contestá en una o dos frases cortas, sin listas, sin markdown, sin emojis ni símbolos. Escribí los números como se dicen ("las cinco y media", "veinte grados").',
+    'REGLAS: tus respuestas se leen con un parlante, así que contestá en una o dos frases cortas (menos de 30 palabras, salvo que te pidan un resumen o una explicación), sin repetir lo que dijo la persona, sin listas, sin markdown, sin emojis ni símbolos. Escribí los números como se dicen ("las cinco y media", "veinte grados").',
     'Para temporizadores, recordatorios, clima e impresoras usá SIEMPRE las herramientas; nunca digas que hiciste algo sin haberla llamado ni inventes datos del clima o de las impresoras. Para fechas calculá desde la fecha de hoy.',
     `Todo lo que hablan queda guardado en una bitácora (la ve ${nombre} en el panel): podés leerla con las herramientas para contestar "qué hablamos ayer" o "resumime la semana". Conversá de forma natural, como una persona: respondé a lo que dijo, hacé alguna pregunta de vuelta cuando venga bien, y acordate de lo que se habló antes.`,
     'Si te piden algo que no podés hacer (por ejemplo prender luces o buscar en internet), decilo con simpatía y ofrecé lo que sí hacés. No inventes. Si no entendiste, pedí que lo repita.',

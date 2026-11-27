@@ -126,46 +126,79 @@ const PIDE_ESTADO = /\bestado\b|\bcomo (van|va|esta|estan)\b|\bcuanto falta\b|\b
 /** ¿Pide VER una impresora (su foto)? "mostrame la H2C", "foto de la A1". "El estado de las impresoras" no: eso es otro pedido. */
 export const pideVerCamara = (t: string) => VERBOS_VER.test(t) && PALABRAS_IMPRESORA.test(t) && !PIDE_ESTADO.test(t)
 
+/** Cuántas palabras tiene lo que dijiste. */
+const palabrasDe = (t: string) => t.split(/\s+/).filter(Boolean).length
+/** Pedidos con un verbo claro ("poneme un timer…", "recordame…"): aguantan frases largas. */
+const MAX_PEDIDO = 14
+/** Preguntas y frases sueltas ("qué hora es", "cómo van las impresoras"): solo cuentan si son cortas. Si no, es charla y va a la IA. */
+const MAX_CORTA = 7
+/** "Gracias", "chau", "listo": solo cuentan solas. */
+const MAX_SOCIAL = 3
+
+const PALABRAS_IMPRESORA_ESTADO = /\b(impresora|impresoras|impresion|impresiones)\b/
+const PIDE_ESTADO_IMPRESORA =
+  /\b(estado|como (va|van|esta|estan|anda|andan)|cuanto (falta|queda)|que (esta|estan|hay)|imprimiendo|termino|terminaron|novedades|informe|reporte)\b/
+
 /**
- * Qué te pidió. null = no se entendió. El orden importa: gana la primera que coincide
- * ("cuánto tiempo llevo sentado" no es el clima; "qué hacés" es charla y "qué sabés hacer" es ayuda).
+ * Qué te pidió. null = no se entendió como un pedido (entonces es charla y se la pasamos a la IA).
+ * El orden importa: gana la primera que coincide ("cuánto tiempo llevo sentado" no es el clima; "qué hacés" es charla y "qué sabés hacer" es ayuda).
+ * Para no tirarte un menú cuando solo estás conversando ("quiero mejorar mis impresiones el año que viene"), los pedidos sueltos solo se
+ * reconocen en frases cortas y con la forma de una pregunta o un comando; las frases largas sin un verbo claro van a la IA.
  * Todo lo que se puede decir está en CATALOGO (que además se muestra en el panel y se prueba con tests).
  */
 export function interpretar(texto: string): Orden | null {
   const t = normalizar(texto)
   if (!t) return null
-  // La bitácora va primero: "anotá en la bitácora que estuve sentado" no es "cuánto llevo sentado".
-  if (ANOTAR_BITACORA.test(t)) return 'anotarBitacora'
-  if (RETOMAR_BITACORA.test(t)) return 'retomarBitacora' // antes que "pausar": "salí del modo privado" también nombra el modo privado
-  if (PAUSAR_BITACORA.test(t)) return 'pausarBitacora'
-  if (BORRAR_ULTIMO.test(t)) return 'borrarUltimo'
-  if (/(cuanto|hace cuanto|cuantos minutos).*(sentad|llevo)|\bsentad/.test(t)) return 'tiempoSentado'
-  // La consulta va primero: "cuánto falta para el temporizador" y "pará el temporizador" se escriben igual sin tildes.
-  if (LISTAR.test(t)) return 'listarAgenda'
-  if (CANCELAR.test(t)) return 'cancelarAgenda'
-  if (FALTA_PARA.test(t) && !/\bimpresora|\bimpresion|\bimprimiendo/.test(t) && !PIDE_TEMPORIZADOR.test(t)) return 'faltaPara'
-  if (PIDE_TEMPORIZADOR.test(t)) return 'temporizador'
-  // "avisame en 15 minutos" es un temporizador; "avisame mañana que tengo turno" es un recordatorio
-  if (/\bavisame\b/.test(t) && /\b(minutos?|horas?|segundos?)\b/.test(t) && !/\bque\b/.test(t)) return 'temporizador'
-  if (PIDE_RECORDATORIO.test(t) || /\bavisame\b/.test(t)) return 'recordatorio'
-  if (pideVerCamara(t)) return 'verCamara'
-  if (/\bimpresora|\bimpresion|\bimprimiendo|\bcuanto falta\b/.test(t)) return 'impresoras'
-  if (/\bque dia\b|\bque fecha\b|\ba cuanto estamos\b|\bfecha de hoy\b|\bdia de hoy\b/.test(t)) return 'fecha'
-  if (/\b(clima|temperatura|llover|lluvia|llueve|llovera|frio|calor|pronostico|paraguas|abrigo|campera)\b|\bel tiempo\b/.test(t)) return 'clima'
-  if (/\bque horas?\b|\bla hora\b|\bhora es\b/.test(t)) return 'hora'
-  if (/\blevant|\bdescans|\bparado\b/.test(t)) return 'levante'
-  if (/\bagua\b|\btome\b|\bbebi\b/.test(t)) return 'agua'
-  if (/\bayuda\b|\bque sabes\b|\bque podes\b|\bcomandos\b|\bcomo funcionas\b/.test(t)) return 'ayuda'
-  if (/\bque haces\b|\bque estas haciendo\b|\ben que andas\b|\bque hacias\b|\bque andas haciendo\b/.test(t)) return 'queHaces'
-  if (/\bcomo estas\b|\bque tal\b|\bcomo andas\b|\bcomo te va\b/.test(t)) return 'comoEstas'
-  if (/\bquien sos\b|\bquien eres\b|\bcomo te llamas\b|\bcual es tu nombre\b/.test(t)) return 'quienSos'
-  if (/\bestas ahi\b|\bme escuchas\b|\bme oyes\b|\bestas despierto\b/.test(t)) return 'estasAhi'
-  if (/\bestoy cansado\b|\btengo sueno\b|\bestoy agotado\b|\bno doy mas\b/.test(t)) return 'cansado'
-  if (/\bchiste\b|\bhace reir\b|\bhaceme reir\b|\balgo gracioso\b/.test(t)) return 'chiste'
-  if (/\brepeti\b|\brepite\b|\bde nuevo\b|\botra vez\b|\bno te escuche\b|\bno entendi\b/.test(t)) return 'repetir'
-  if (/\b(chau|adios|hasta luego|hasta manana|nos vemos|me voy)\b/.test(t)) return 'despedida'
-  if (/\b(gracias|nada|listo|basta|callate|silencio|ya esta)\b/.test(t)) return 'chau'
-  if (/\b(hola|buenas|buen dia|buenos dias|buenas tardes|buenas noches)\b/.test(t)) return 'saludo'
+  const n = palabrasDe(t)
+  const corta = n <= MAX_CORTA
+
+  // ---- pedidos con un verbo claro (aguantan frases largas)
+  if (n <= MAX_PEDIDO) {
+    // La bitácora va primero: "anotá en la bitácora que estuve sentado" no es "cuánto llevo sentado".
+    if (ANOTAR_BITACORA.test(t)) return 'anotarBitacora'
+    if (RETOMAR_BITACORA.test(t)) return 'retomarBitacora' // antes que "pausar": "salí del modo privado" también nombra el modo privado
+    if (PAUSAR_BITACORA.test(t)) return 'pausarBitacora'
+    if (BORRAR_ULTIMO.test(t)) return 'borrarUltimo'
+    if (/(cuanto|hace cuanto|cuantos minutos).*(sentad|llevo)/.test(t)) return 'tiempoSentado'
+    // La consulta va primero: "cuánto falta para el temporizador" y "pará el temporizador" se escriben igual sin tildes.
+    if (LISTAR.test(t)) return 'listarAgenda'
+    if (CANCELAR.test(t)) return 'cancelarAgenda'
+    if (FALTA_PARA.test(t) && !/\bimpresora|\bimpresion|\bimprimiendo/.test(t) && !PIDE_TEMPORIZADOR.test(t)) return 'faltaPara'
+    if (PIDE_TEMPORIZADOR.test(t)) return 'temporizador'
+    // "avisame en 15 minutos" es un temporizador; "avisame mañana que tengo turno" es un recordatorio
+    if (/\bavisame\b/.test(t) && /\b(minutos?|horas?|segundos?)\b/.test(t) && !/\bque\b/.test(t)) return 'temporizador'
+    if (PIDE_RECORDATORIO.test(t) || /\bavisame\b/.test(t)) return 'recordatorio'
+    // La hora y la fecha tienen una forma muy específica ("qué hora es"), así que aguantan frases un poco más largas.
+    if (/\bque horas? (es|son)\b|\b(decime|dime|deci|dame|tenes) la hora\b|\bhora actual\b/.test(t)) return 'hora'
+    if (/\bque (dia|fecha) (es|son|estamos)\b|\ba cuanto estamos\b|\bfecha de hoy\b/.test(t)) return 'fecha'
+    if (n <= 10 && /\bclima\b|\btemperatura\b|\bpronostico\b|\b(va a|vaya a) llover\b|\bllueve\b|\bllovera\b/.test(t)) return 'clima'
+  }
+
+  // ---- frases cortas: preguntas y comandos sueltos
+  if (corta) {
+    if (pideVerCamara(t)) return 'verCamara'
+    // Las impresoras: hace falta nombrarlas Y preguntar por su estado ("impresiones" a secas es otra cosa: "quiero mejorar mis impresiones").
+    if ((PALABRAS_IMPRESORA_ESTADO.test(t) && PIDE_ESTADO_IMPRESORA.test(t)) || /\bimprimiendo\b/.test(t) || (n <= 4 && /\bcuanto falta\b/.test(t))) return 'impresoras'
+    if (/\b(frio|calor|lluvia|paraguas|abrigo|campera)\b|\bel tiempo\b/.test(t) && n <= 5) return 'clima'
+    if (/\bya (me )?(levante|descanse|pare)\b|\bme levante\b|\bdescanse\b/.test(t)) return 'levante'
+    if (/\bagua\b/.test(t)) return 'agua'
+    if (/\bestoy cansado\b|\btengo sueno\b|\bestoy agotado\b|\bno doy mas\b/.test(t)) return 'cansado'
+    if (/\bchiste\b|\bhace reir\b|\bhaceme reir\b|\balgo gracioso\b/.test(t)) return 'chiste'
+  }
+  if (n <= 5) {
+    if (/\bayuda\b|\bque sabes\b|\bque podes\b|\bcomandos\b|\bcomo funcionas\b/.test(t)) return 'ayuda'
+    if (/\bque haces\b|\bque estas haciendo\b|\ben que andas\b|\bque hacias\b|\bque andas haciendo\b/.test(t)) return 'queHaces'
+    if (/\bcomo estas\b|\bque tal\b|\bcomo andas\b|\bcomo te va\b/.test(t)) return 'comoEstas'
+    if (/\bquien sos\b|\bquien eres\b|\bcomo te llamas\b|\bcual es tu nombre\b/.test(t)) return 'quienSos'
+    if (/\bestas ahi\b|\bme escuchas\b|\bme oyes\b|\bestas despierto\b/.test(t)) return 'estasAhi'
+  }
+  if (n <= 4 && /\brepeti\b|\brepite\b|\bde nuevo\b|\botra vez\b|\bno te escuche\b|\bno entendi\b/.test(t)) return 'repetir'
+  // ---- cortesías: solo cuentan solas ("gracias", "chau"); dentro de una frase larga no cierran nada
+  if (n <= MAX_SOCIAL) {
+    if (/\b(chau|adios|hasta luego|hasta manana|nos vemos|me voy)\b/.test(t)) return 'despedida'
+    if (/\b(gracias|listo|basta|callate|silencio|ya esta)\b/.test(t)) return 'chau'
+  }
+  if (n <= 4 && /\b(hola|buenas|buen dia|buenos dias|buenas tardes|buenas noches)\b/.test(t)) return 'saludo'
   return null
 }
 
