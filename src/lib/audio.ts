@@ -57,6 +57,8 @@ export function callar() {
 }
 
 export function hablar(texto: string) {
+  // La cara mueve la boca siguiendo las letras de lo que se va a decir.
+  window.dispatchEvent(new CustomEvent('nooby-habla', { detail: texto }))
   if (window.NoobyNativo) {
     window.NoobyNativo.hablar(texto)
     return

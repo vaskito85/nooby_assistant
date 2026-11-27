@@ -200,140 +200,179 @@ body {
 }
 
 /* =====================================================================
-   La cara: cuadro de proporción fija; ojos y boca en posiciones absolutas.
-   Los gestos cambian forma/color/escala, nunca el espacio que ocupa.
+   La cara: un SVG de proporción fija (500 × 400). Los gestos cambian formas y colores, nunca el espacio que ocupa.
+   Los números (párpados, cejas, boca) los anima rostroVivo.ts; acá están los colores y los detalles por humor.
    ===================================================================== */
 .cara {
+  --placa: #16243f;
+  --placa-aro: #5eead4;
+  --iris: #2dd4bf;
+  --ceja: #9af0e3;
+  --labios: #7ee8d8;
+  --mejilla: #ff8fab;
   position: relative;
   width: min(82%, 72vmin);
   aspect-ratio: 1 / 0.8;
 }
-
-.ojos {
+.cara svg {
   position: absolute;
-  left: 0;
-  right: 0;
-  top: 2%;
-  height: 64%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 16%;
-}
-.ojo {
-  width: 30%;
+  inset: 0;
+  width: 100%;
   height: 100%;
-  background: var(--ojo);
-  border-radius: 50%;
-  box-shadow: 0 0 40px #5eead433;
-  /* --gx/--gy (de -1 a 1) los escribe mirada.ts a cada cuadro: los ojos siguen a la persona */
-  translate: calc(var(--gx, 0) * 42%) calc(var(--gy, 0) * 20%);
-  transition:
-    height 0.3s ease,
-    border-radius 0.3s ease,
-    background 0.3s ease;
-  animation: parpadeo 7s ease-in-out infinite;
+  overflow: visible;
 }
-.ojo + .ojo {
-  animation-delay: 0s;
+.cara .placa {
+  fill: var(--placa);
 }
-
-.boca {
-  position: absolute;
-  left: 50%;
-  bottom: 5%;
-  width: 24%;
-  height: 11%;
-  translate: -50% 0;
-  border-bottom: clamp(4px, 1.3vmin, 8px) solid var(--ojo);
-  border-radius: 0 0 999px 999px;
-  transform-origin: 50% 0;
-  transition:
-    width 0.3s ease,
-    border-color 0.3s ease;
+.cara .placa-aro {
+  fill: none;
+  stroke: var(--placa-aro);
+  stroke-width: 10;
+  opacity: 0.18;
+  transition: stroke 0.4s ease;
 }
-
-@keyframes parpadeo {
-  0%,
-  95%,
-  100% {
-    scale: 1 1;
-  }
-  97.5% {
-    scale: 1 0.1;
-  }
+.cara .mejillas ellipse {
+  fill: var(--mejilla);
+  transition: fill 0.4s ease;
 }
-
-/* dormido: ojos como rayitas, sin parpadeo ni seguimiento */
-.cara[data-humor='dormido'] .ojo {
-  height: 3%;
-  border-radius: 8px;
-  translate: none;
-  animation: none;
+.cara .ojo-blanco {
+  fill: #eef4ff;
+}
+.cara .ojo-borde {
+  fill: none;
+  stroke: #0b1224;
+  stroke-width: 5;
+}
+/* El iris sigue a la persona: --gx/--gy (de -1 a 1) los escribe mirada.ts a cada cuadro. */
+.cara .iris {
+  transform: translate(calc(var(--gx, 0) * 20px), calc(var(--gy, 0) * 26px));
+  transition: transform 0.12s ease-out;
+}
+.cara .iris-color {
+  fill: var(--iris);
+  transition: fill 0.4s ease;
+}
+.cara .iris-borde {
+  fill: none;
+  stroke: #0b1224;
+  stroke-opacity: 0.35;
+  stroke-width: 5;
+}
+.cara .pupila {
+  fill: #0b1224;
+}
+.cara .brillo {
+  fill: #fff;
+  opacity: 0.95;
+}
+.cara .brillo.chico {
   opacity: 0.7;
-  box-shadow: none;
 }
-.cara[data-humor='dormido'] .boca {
-  width: 7%;
-  height: 2%;
-  border-bottom-width: clamp(3px, 0.8vmin, 5px);
-  opacity: 0.55;
+.cara .parpado {
+  fill: var(--placa);
 }
-.zzz {
-  position: absolute;
-  top: 0;
-  right: 4%;
-  color: var(--suave);
-  font-size: clamp(1rem, 4vmin, 1.8rem);
+.cara .ceja {
+  fill: none;
+  stroke: var(--ceja);
+  stroke-width: 13;
+  stroke-linecap: round;
+  transition: stroke 0.4s ease;
+}
+.cara .boca-interior {
+  fill: #3b1624;
+}
+.cara .dientes {
+  fill: #f6f8ff;
+  transition: opacity 0.12s;
+}
+.cara .lengua {
+  fill: #ff7f9a;
+  transition: opacity 0.12s;
+}
+.cara .labios {
+  fill: none;
+  stroke: var(--labios);
+  stroke-width: 7;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  transition: stroke 0.4s ease;
+}
+
+/* detalles que aparecen según el humor */
+.cara .extra {
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.cara .extra-zzz,
+.cara .extra-duda {
+  fill: var(--suave);
+  font-size: 40px;
+  font-weight: 700;
   letter-spacing: 6px;
 }
-
-/* feliz: ojos en arco hacia arriba, sonrisa grande */
-.cara[data-humor='feliz'] .ojo {
-  height: 40%;
-  border-radius: 999px 999px 0 0;
-  animation: none;
+.cara .extra-puntos circle {
+  fill: var(--suave);
+  animation: puntos 1.4s ease-in-out infinite;
 }
-.cara[data-humor='feliz'] .boca {
-  width: 38%;
+.cara .extra-puntos circle:nth-child(2) {
+  animation-delay: 0.2s;
 }
-
-/* alerta (aviso de impresión): rojo, ojos algo más grandes, boca en "o" */
-.cara[data-humor='alerta'] .ojo {
-  background: var(--alerta);
-  box-shadow: 0 0 50px #fb718555;
-  animation: none;
+.cara .extra-puntos circle:nth-child(3) {
+  animation-delay: 0.4s;
 }
-.cara[data-humor='alerta'] .boca {
-  width: 12%;
-  height: 12%;
-  border: clamp(4px, 1.3vmin, 8px) solid var(--alerta);
-  border-radius: 50%;
-}
-
-/* hablando: la boca se abre y se cierra (solo escala: no mueve nada alrededor) */
-.cara[data-humor='hablando'] .boca {
-  animation: habla 0.32s ease-in-out infinite alternate;
-}
-@keyframes habla {
-  from {
-    scale: 1 0.35;
+@keyframes puntos {
+  0%,
+  100% {
+    opacity: 0.25;
   }
-  to {
-    scale: 0.8 1.2;
+  50% {
+    opacity: 1;
   }
 }
+.cara .extra-gota {
+  fill: #7dd3fc;
+}
+.cara[data-humor='dormido'] .extra-zzz,
+.cara[data-humor='pensando'] .extra-puntos,
+.cara[data-humor='confuso'] .extra-duda,
+.cara[data-humor='alerta'] .extra-gota {
+  opacity: 0.9;
+}
 
-/* atento (te escucha): ojos un poco más grandes y brillantes, boca chica */
-.cara[data-humor='atento'] .ojo {
-  scale: 1.08 1.08;
-  animation: none;
-  box-shadow: 0 0 60px #5eead466;
+/* colores por humor */
+.cara[data-humor='alerta'] {
+  --iris: #fb7185;
+  --ceja: #fda4af;
+  --labios: #fb7185;
+  --placa-aro: #fb7185;
 }
-.cara[data-humor='atento'] .boca {
-  width: 10%;
-  height: 7%;
+.cara[data-humor='alerta'] .placa-aro {
+  opacity: 0.35;
 }
+.cara[data-humor='enojado'] {
+  --iris: #f97316;
+  --ceja: #fdba74;
+  --labios: #fb923c;
+  --mejilla: #ff5a36;
+  --placa-aro: #f97316;
+}
+.cara[data-humor='enojado'] .placa-aro {
+  opacity: 0.3;
+}
+.cara[data-humor='triste'] {
+  --iris: #60a5fa;
+  --ceja: #93c5fd;
+  --labios: #93c5fd;
+}
+.cara[data-humor='dormido'] {
+  --labios: #5b8f89;
+  --ceja: #6aa8a0;
+}
+.cara[data-humor='feliz'] .placa-aro,
+.cara[data-humor='risa'] .placa-aro {
+  opacity: 0.3;
+}
+
 .escuchando {
   display: flex;
   flex-direction: column;
@@ -345,37 +384,6 @@ body {
   color: var(--suave);
   font-size: 0.95rem;
   font-style: italic;
-}
-
-/* enojado: ojos achatados naranjas con cejas en V y boca triste */
-.cara[data-humor='enojado'] .ojo {
-  position: relative;
-  height: 62%;
-  background: var(--enojo);
-  box-shadow: 0 0 50px #f9731655;
-  animation: none;
-}
-.cara[data-humor='enojado'] .ojo::before {
-  content: '';
-  position: absolute;
-  left: -12%;
-  right: -12%;
-  top: -6%;
-  height: clamp(8px, 2.4vmin, 16px);
-  border-radius: 8px;
-  background: var(--enojo);
-}
-.cara[data-humor='enojado'] .ojo:first-child::before {
-  rotate: 20deg;
-}
-.cara[data-humor='enojado'] .ojo:last-child::before {
-  rotate: -20deg;
-}
-.cara[data-humor='enojado'] .boca {
-  width: 22%;
-  border-bottom: 0;
-  border-top: clamp(4px, 1.3vmin, 8px) solid var(--enojo);
-  border-radius: 999px 999px 0 0;
 }
 
 /* ---------- globito pensador (PC + ✓ / ✗) ---------- */
@@ -439,8 +447,7 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ojo,
-  .cara[data-humor='hablando'] .boca {
+  .cara .extra-puntos circle {
     animation: none;
   }
 }
@@ -1332,4 +1339,19 @@ a.pn-btn {
   .pn-busca .pn-btn {
     width: auto;
   }
+}
+
+/* galería de caras (/#/caras) */
+.caras-galeria {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.caras-escena {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0;
+}
+.caras-botones {
+  justify-content: center;
 }

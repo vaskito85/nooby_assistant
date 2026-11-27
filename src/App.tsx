@@ -95,6 +95,25 @@ export function App() {
   const [sentadoMin, setSentadoMin] = useState(0) // solo minutos enteros: no re-renderiza 8 veces por segundo
   const [aviso, setAviso] = useState<Aviso | null>(null)
   const [hablando, setHablando] = useState(false)
+  // Gestos de la cara: pensando mientras espera a la IA, y expresiones que se muestran al terminar de hablar (risa, bostezo, duda, pena).
+  const [razonando, setRazonando] = useState(false)
+  const [gesto, setGesto] = useState<Humor | null>(null)
+  const [gestoTick, setGestoTick] = useState(0)
+  const gestoPendiente = useRef<{ humor: Humor; ms: number } | null>(null)
+  const timerGesto = useRef<number | null>(null)
+  const hacerGesto = (humor: Humor, ms = 2500) => {
+    gestoPendiente.current = { humor, ms }
+    setGestoTick((n) => n + 1)
+  }
+  useEffect(() => {
+    // El gesto sale cuando Nooby termina de hablar (o enseguida, si no está hablando).
+    if (hablando || !gestoPendiente.current) return
+    const g = gestoPendiente.current
+    gestoPendiente.current = null
+    setGesto(g.humor)
+    if (timerGesto.current) window.clearTimeout(timerGesto.current)
+    timerGesto.current = window.setTimeout(() => setGesto(null), g.ms)
+  }, [hablando, gestoTick])
   const [saludo, setSaludo] = useState(false)
   const [mimo, setMimo] = useState(false)
   const [enojado, setEnojado] = useState(false)
@@ -912,9 +931,11 @@ export function App() {
         break
       case 'cansado':
         responder(dichos.estoyCansado())
+        hacerGesto('bostezo', 2800)
         break
       case 'chiste':
         responder(dichos.chiste())
+        hacerGesto('risa', 2800)
         break
       case 'repetir':
         responder(ultimaRespuesta.current || 'Todavía no dije nada.')
@@ -932,22 +953,27 @@ export function App() {
   const charlarLibre = async (texto: string) => {
     const noEntendi = () => {
       responder('¿Cómo? No te entendí.')
+      hacerGesto('confuso')
       mantenerAtento()
     }
     if (texto.trim().split(/\s+/).length < 2) return noEntendi()
     mantenerAtento(30_000) // no se duerme mientras piensa
     setNota('Pensando…')
+    setRazonando(true)
     try {
       const msgs = historial.current.map(({ rol, texto: t }) => ({ rol, texto: t }))
       const r = await charlarIA(msgs, minutos(sentado.current.sentadoMs))
       setNota('')
+      setRazonando(false)
       if (r.error === 'sin_clave') return noEntendi()
+      if (r.error) hacerGesto('triste')
       responder(r.texto)
       void refrescarAgenda() // por si la IA puso o canceló un temporizador o recordatorio
       conversando.current = true // modo conversación: sigue escuchando sin que lo despiertes de nuevo
       mantenerAtento()
     } catch {
       setNota('')
+      setRazonando(false)
       noEntendi()
     }
   }
@@ -1218,8 +1244,12 @@ export function App() {
         ? 'enojado'
         : hablando
           ? 'hablando'
-          : oido === 'atento' || entrenandoActivo
-            ? 'atento'
+          : gesto
+            ? gesto
+            : razonando
+              ? 'pensando'
+              : oido === 'atento' || entrenandoActivo
+                ? 'atento'
             : mimo || saludo
               ? 'feliz'
               : conCamara && ausenteLargo

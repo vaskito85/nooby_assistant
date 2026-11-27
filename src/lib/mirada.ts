@@ -15,9 +15,13 @@ export class Mirada {
   private cx = 0
   private cy = 0
   private raf = 0
+  // Sin a quién mirar los ojos no quedan clavados al centro: de vez en cuando se van a otro lado (como una persona distraída).
+  private ocioso = true
+  private proxDistraccion = 0
 
   constructor(private el: HTMLElement) {
     const paso = () => {
+      if (this.ocioso) this.distraer()
       this.cx += (this.tx - this.cx) * SUAVIZADO
       this.cy += (this.ty - this.cy) * SUAVIZADO
       this.el.style.setProperty('--gx', this.cx.toFixed(3))
@@ -29,14 +33,33 @@ export class Mirada {
 
   /** x, y: posición de la cara en el cuadro, de -1 a 1 (x: derecha de la pantalla = +). */
   apuntar(x: number, y: number) {
+    this.ocioso = false
     this.tx = limitar(x * GANANCIA)
     this.ty = limitar(y * GANANCIA)
   }
 
   /** Sin a quién mirar: ojos al centro. */
   descansar() {
-    this.tx = 0
-    this.ty = 0
+    if (!this.ocioso) {
+      this.ocioso = true
+      this.tx = 0
+      this.ty = 0
+      this.proxDistraccion = performance.now() + 1500
+    }
+  }
+
+  private distraer() {
+    const ahora = performance.now()
+    if (ahora < this.proxDistraccion) return
+    // 4 de cada 10 veces vuelve al centro; si no, mira un poco hacia algún costado, arriba o abajo.
+    if (Math.random() < 0.4) {
+      this.tx = 0
+      this.ty = 0
+    } else {
+      this.tx = (Math.random() * 2 - 1) * 0.5
+      this.ty = (Math.random() * 2 - 1) * 0.3
+    }
+    this.proxDistraccion = ahora + 1800 + Math.random() * 3200
   }
 
   detener() {

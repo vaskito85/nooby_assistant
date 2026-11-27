@@ -23,6 +23,9 @@
 ## Hecho (v0.3.2)
 - [x] Palabra clave con gramática cerrada (llamado/libre) y freno automático de la cámara
 
+## Hecho (v0.10.0)
+- [x] Cara nueva en SVG: ojos con iris y párpados, cejas, mejillas y boca con labios/dientes/lengua; 13 humores; la boca sigue las letras de lo que dice; parpadeo, respiración y mirada distraída. Galería en /#/caras
+
 ## Hecho (v0.9.0)
 - [x] Bitácora (cada charla queda en ~/.nooby/bitacora/AAAA-MM-DD.md, modo privado, notas por voz, panel con búsqueda/descarga/borrado), memoria de datos y modo conversación (30 s atento sin repetir "che nooby")
 
