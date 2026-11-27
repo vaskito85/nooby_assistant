@@ -410,3 +410,64 @@ export async function leerUso(): Promise<ResumenUso> {
   if (!r.ok) throw new Error('uso ' + r.status)
   return r.json()
 }
+
+// ---------- listas (compras, pendientes…) ----------
+export interface ItemLista {
+  n: number
+  id: string
+  texto: string
+  hecho: boolean
+}
+export interface ListaVista {
+  nombre: string
+  items: ItemLista[]
+  /** Cómo se lee en voz alta (viene del servidor). */
+  texto?: string
+  sumados?: number
+  repetidos?: string[]
+  quitados?: number
+  item?: string
+}
+
+export async function leerListas(): Promise<ListaVista[]> {
+  const r = await fetch('/api/listas', { cache: 'no-store' })
+  if (!r.ok) throw new Error('listas ' + r.status)
+  return ((await r.json()) as { listas: ListaVista[] }).listas
+}
+
+/** Una acción sobre una lista. Devuelve la lista como quedó, o null si no se encontró (la lista o el ítem). */
+export async function accionLista(cuerpo: {
+  accion: 'agregar' | 'ver' | 'marcar' | 'quitar' | 'reordenar' | 'limpiar_hechos' | 'vaciar' | 'borrar'
+  lista?: string
+  items?: string[]
+  item?: string
+  hecho?: boolean
+  orden?: 'invertir' | 'primero' | 'ultimo'
+}): Promise<ListaVista | null> {
+  const r = await fetch('/api/listas', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cuerpo) })
+  if (r.status === 404) return null
+  if (!r.ok) throw new Error(((await r.json().catch(() => null)) as { error?: string } | null)?.error ?? 'listas ' + r.status)
+  return r.json()
+}
+
+// ---------- comparar modelos de IA ----------
+export interface FilaComparacion {
+  id: string
+  ok: boolean
+  ms: number
+  texto: string
+  llamadas: string[]
+  error: string | null
+}
+export interface ResultadoModelo {
+  modelo: string
+  aciertos: number
+  de: number
+  msPromedio: number
+  tokens: number
+  filas: FilaComparacion[]
+}
+export async function compararModelos(): Promise<{ resultados: ResultadoModelo[]; actual: string } | { error: string }> {
+  const r = await fetch('/api/ia/comparar', { method: 'POST' })
+  return r.json()
+}

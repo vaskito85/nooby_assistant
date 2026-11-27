@@ -17,12 +17,13 @@ import { describirImpresoras, elegirImpresora, INFORME_VIGENTE_MS, inferirEstado
 import { comentarioPorMovimiento, FRASE_HOLA_DE_NUEVO, FRASE_YA_TE_VAS } from './lib/comentarios'
 import { Mirada } from './lib/mirada'
 import { quitarEco } from './lib/eco'
+import { entenderLista, nombreHablado } from './lib/listas'
 import { detectarLlamado, esConfirmacion, extraerNota, interpretar, normalizar, type Orden } from './lib/voz'
 import { callar, desbloquear, hablar, sonar, type Sonido } from './lib/audio'
 import { frase, pedirClima, type Clima } from './lib/clima'
 import { escenaClima } from './lib/escenas'
 import { aplicarRemota, cargarAjustes, guardarAjustes, limpiarLlamadas, temaConfig, type Ajustes } from './lib/config'
-import { guardarBitacora, quitarUltimasBitacora, charlarIA, transcribirAudio, conectarLocal, estadoLocal, cancelarAgendaServidor, cancelarPedidoFoto, crearAgenda, guardarConfigLocal, leerAgenda, leerImpresoras, pedirFoto, urlFoto, type AgendaItem } from './lib/canalLocal'
+import { accionLista, leerListas, guardarBitacora, quitarUltimasBitacora, charlarIA, transcribirAudio, conectarLocal, estadoLocal, cancelarAgendaServidor, cancelarPedidoFoto, crearAgenda, guardarConfigLocal, leerAgenda, leerImpresoras, pedirFoto, urlFoto, type AgendaItem } from './lib/canalLocal'
 import { conectarNtfy } from './lib/ntfy'
 import { Presencia } from './lib/presencia'
 import { Sentado } from './lib/sentado'
@@ -702,6 +703,67 @@ export function App() {
     responderSinGuardar(ok ? 'Anotado.' : 'No pude guardarlo en la bitácora.')
   }
 
+  /** Pedidos de listas por voz ("agregá leche a la lista de compras", "tachá pan", "qué hay en la lista"). */
+  const atenderLista = async (texto: string) => {
+    const p = entenderLista(texto)
+    if (!p) {
+      responder('No entendí qué hacer con la lista.')
+      return
+    }
+    const unir = (xs: string[]) => (xs.length <= 1 ? xs.join('') : xs.slice(0, -1).join(', ') + ' y ' + xs[xs.length - 1])
+    const de = nombreHablado(p.lista)
+    try {
+      if (p.accion === 'agregar') {
+        const r = await accionLista({ accion: 'agregar', lista: p.lista, items: p.items })
+        const ya = new Set((r?.repetidos ?? []).map((x) => x.toLowerCase()))
+        const nuevos = p.items.filter((i) => !ya.has(i.toLowerCase()))
+        if (nuevos.length === 0) responder('Eso ya estaba en la lista de ' + de + '.')
+        else responder('Listo, agregué ' + unir(nuevos) + ' a la lista de ' + de + '.' + (ya.size > 0 ? ' ' + unir([...ya]) + ' ya estaba.' : ''))
+      } else if (p.accion === 'ver') {
+        if (p.lista) {
+          const r = await accionLista({ accion: 'ver', lista: p.lista })
+          responder(r?.texto ?? 'No tengo ninguna lista de ' + de + '.')
+        } else {
+          // Sin decir cuál: se leen las que tengan cosas (hasta tres).
+          const todas = (await leerListas()).filter((l) => l.items.length > 0).slice(0, 3)
+          if (todas.length === 0) responder('No tengo ninguna lista con cosas.')
+          else {
+            const textos: string[] = []
+            for (const l of todas) textos.push((await accionLista({ accion: 'ver', lista: l.nombre }))?.texto ?? '')
+            responder(textos.filter(Boolean).join(' '))
+          }
+        }
+      } else if (p.accion === 'marcar') {
+        const hechos: string[] = []
+        const faltan: string[] = []
+        for (const i of p.items) {
+          const r = await accionLista({ accion: 'marcar', lista: p.lista, item: i })
+          if (r?.item) hechos.push(r.item)
+          else faltan.push(i)
+        }
+        responder(
+          (hechos.length > 0 ? 'Tachado: ' + unir(hechos) + '.' : '') + (faltan.length > 0 ? ' No encontré ' + unir(faltan) + ' en la lista de ' + de + '.' : '') || 'No encontré eso en la lista.',
+        )
+      } else if (p.accion === 'quitar') {
+        const quitados: string[] = []
+        const faltan: string[] = []
+        for (const i of p.items) {
+          const r = await accionLista({ accion: 'quitar', lista: p.lista, item: i })
+          if (r?.item) quitados.push(r.item)
+          else faltan.push(i)
+        }
+        responder(
+          (quitados.length > 0 ? 'Saqué ' + unir(quitados) + ' de la lista de ' + de + '.' : '') + (faltan.length > 0 ? ' No encontré ' + unir(faltan) + '.' : '') || 'No encontré eso en la lista.',
+        )
+      } else {
+        const r = await accionLista({ accion: 'vaciar', lista: p.lista })
+        responder(r ? 'Listo, vacié la lista de ' + de + '.' : 'No tengo ninguna lista de ' + de + '.')
+      }
+    } catch {
+      responder('No pude hacer eso con la lista.')
+    }
+  }
+
   const contarCuantoFalta = async (texto: string) => {
     const ahoraSrv = await ahoraServidor()
     responder(cuantoFalta(texto, ahoraSrv) ?? '¿Para qué fecha? Decime, por ejemplo, cuánto falta para Navidad.')
@@ -840,6 +902,13 @@ export function App() {
       case 'agua':
         agua.current.descansar()
         responder(`Muy bien, ${nombre}. Hay que tomar agua.`)
+        break
+      case 'listaAgregar':
+      case 'listaVer':
+      case 'listaMarcar':
+      case 'listaQuitar':
+      case 'listaVaciar':
+        void atenderLista(texto)
         break
       case 'anotarBitacora': {
         const nota = extraerNota(texto)

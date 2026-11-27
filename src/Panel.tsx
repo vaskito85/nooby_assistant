@@ -7,6 +7,11 @@ import {
   leerImpresoras,
   leerRed,
   estadoLocal,
+  accionLista,
+  compararModelos,
+  leerListas,
+  type ListaVista,
+  type ResultadoModelo,
   leerUso,
   type ResumenUso,
   agregarMemoria,
@@ -34,7 +39,7 @@ import { describirImpresoras, type InformeImpresoras } from './lib/impresoras'
 import { enviarNtfy } from './lib/ntfy'
 import { CATALOGO } from './lib/voz'
 
-type Seccion = 'inicio' | 'ajustes' | 'voz' | 'ia' | 'uso' | 'bitacora' | 'red' | 'frases' | 'avanzado'
+type Seccion = 'inicio' | 'ajustes' | 'voz' | 'ia' | 'uso' | 'listas' | 'bitacora' | 'red' | 'frases' | 'avanzado'
 
 const numero = (n: number) => n.toLocaleString('es-AR')
 const minutosDe = (seg: number) => (seg < 90 ? Math.round(seg) + ' s' : (seg / 60).toFixed(1).replace('.', ',') + ' min')
@@ -77,6 +82,14 @@ export function Panel() {
   const [modeloIa, setModeloIa] = useState('')
   const [notaIa, setNotaIa] = useState('')
   const [seccion, setSeccion] = useState<Seccion>(() => (sessionStorage.getItem('nooby-panel') as Seccion | null) ?? 'inicio')
+  // Listas
+  const [listas, setListas] = useState<ListaVista[]>([])
+  const [nuevoItem, setNuevoItem] = useState<Record<string, string>>({})
+  const [nuevaLista, setNuevaLista] = useState('')
+  const [notaListas, setNotaListas] = useState('')
+  // Comparar modelos
+  const [comparacion, setComparacion] = useState<{ resultados: ResultadoModelo[]; actual: string } | null>(null)
+  const [comparando, setComparando] = useState(false)
   // Uso de la IA (tokens, cupo)
   const [uso, setUso] = useState<ResumenUso | null>(null)
   // Bitácora y memoria
@@ -249,6 +262,43 @@ export function Panel() {
     }
   }, [modo, seccion])
 
+  const traerListas = async () => {
+    try {
+      setListas(await leerListas())
+    } catch (e) {
+      setNotaListas('No pude leer las listas: ' + (e instanceof Error ? e.message : 'error'))
+    }
+  }
+  useEffect(() => {
+    if (modo === 'local' && seccion === 'listas') void traerListas()
+  }, [modo, seccion])
+  const sobreLista = async (cuerpo: Parameters<typeof accionLista>[0]) => {
+    try {
+      await accionLista(cuerpo)
+      await traerListas()
+    } catch (e) {
+      setNotaListas('No pude hacerlo: ' + (e instanceof Error ? e.message : 'error'))
+    }
+  }
+
+  const comparar = async () => {
+    setComparando(true)
+    setComparacion(null)
+    setNotaIa('Probando los modelos… tarda unos 30 segundos y gasta unos 15 mil tokens.')
+    try {
+      const r = await compararModelos()
+      if ('error' in r) setNotaIa(r.error === 'sin_clave' ? 'Primero cargá la clave de Groq.' : 'No pude comparar: ' + r.error)
+      else {
+        setComparacion(r)
+        setNotaIa('')
+      }
+    } catch (e) {
+      setNotaIa('No pude comparar: ' + (e instanceof Error ? e.message : 'error'))
+    } finally {
+      setComparando(false)
+    }
+  }
+
   const guardarClaveIa = async (cambio: { clave?: string; modelo?: string; borrar?: boolean; whisper?: boolean }) => {
     try {
       const i = await guardarIA(cambio)
@@ -332,6 +382,7 @@ export function Panel() {
     { id: 'voz', icono: '🎙️', nombre: 'Despertar' },
     { id: 'ia', icono: '✨', nombre: 'Charla IA' },
     { id: 'uso', icono: '📊', nombre: 'Uso de la IA' },
+    { id: 'listas', icono: '✅', nombre: 'Listas' },
     { id: 'bitacora', icono: '📓', nombre: 'Bitácora' },
     { id: 'red', icono: '🖨️', nombre: 'Impresoras' },
     { id: 'frases', icono: '💬', nombre: 'Qué decirle' },
@@ -614,6 +665,44 @@ export function Panel() {
                     </div>
                     {notaIa && <p className="pn-nota">{notaIa}</p>}
                   </div>
+                  <div className="pn-tarjeta">
+                    <h3>Elegir el mejor modelo</h3>
+                    <p>
+                      Prueba cada modelo gratis de Groq con cuatro pedidos típicos de Nooby (saludo, temporizador, lista y un recordatorio sin hora) y te
+                      muestra cuál acierta más y más rápido. Las herramientas son de mentira: no crea nada.
+                    </p>
+                    <div className="pn-fila">
+                      <button className="pn-btn secundario" disabled={comparando || !ia?.configurada} onClick={() => void comparar()}>
+                        {comparando ? 'Probando…' : 'Comparar modelos'}
+                      </button>
+                    </div>
+                    {comparacion && (
+                      <div className="pn-bit-lista">
+                        {comparacion.resultados.map((m) => (
+                          <div key={m.modelo} className="pn-modelo" data-actual={m.modelo === comparacion.actual ? 'si' : undefined}>
+                            <b>{m.modelo}</b>
+                            <span>
+                              {m.aciertos} de {m.de} bien · {(m.msPromedio / 1000).toFixed(1).replace('.', ',')} s por pedido · {m.tokens.toLocaleString('es-AR')} tokens
+                            </span>
+                            {m.filas.map((f) => (
+                              <small key={f.id} className="pn-ayuda">
+                                {f.ok ? '✓' : '✗'} {f.id}: {f.error ? f.error : (f.llamadas.length > 0 ? '[' + f.llamadas.join(', ') + '] ' : '') + f.texto}
+                              </small>
+                            ))}
+                            {m.modelo !== comparacion.actual ? (
+                              <div className="pn-fila">
+                                <button className="pn-btn primario" onClick={() => void guardarClaveIa({ modelo: m.modelo }).then(() => setComparacion({ ...comparacion, actual: m.modelo }))}>
+                                  Usar este
+                                </button>
+                              </div>
+                            ) : (
+                              <small className="pn-ayuda">✓ Es el que se usa ahora.</small>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </>
               ) : (
                 <div className="pn-tarjeta">{soloUsb}</div>
@@ -740,6 +829,108 @@ export function Panel() {
                   </div>
                   {notaIa && <p className="pn-nota">{notaIa}</p>}
                   <p className="pn-ayuda">También se lo podés preguntar a Nooby: «cuántos tokens llevo hoy» o «me quedé sin cupo».</p>
+                </>
+              )}
+            </>
+          )}
+
+          {seccion === 'listas' && (
+            <>
+              <h2 className="pn-titulo">Listas</h2>
+              {!local ? (
+                <div className="pn-tarjeta">{soloUsb}</div>
+              ) : (
+                <>
+                  <div className="pn-tarjeta">
+                    <p>
+                      Listas de verdad: compras, pendientes, lo que quieras. Por voz: «agregá leche y pan a la lista de compras», «qué hay en la lista»,
+                      «tachá leche», «sacá el pan de la lista», «vaciá la lista». También se las podés pedir a la IA ("dalas vuelta", "poné esto primero").
+                    </p>
+                    {notaListas && <p className="pn-nota">{notaListas}</p>}
+                    <div className="pn-fila pn-busca">
+                      <input
+                        className="pn-input"
+                        value={nuevaLista}
+                        maxLength={40}
+                        placeholder="Nombre de una lista nueva (ej: compras)"
+                        onChange={(e) => setNuevaLista(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && nuevaLista.trim()) {
+                            void sobreLista({ accion: 'agregar', lista: nuevaLista.trim(), items: [] }).then(() => setNuevaLista(''))
+                          }
+                        }}
+                      />
+                      <button
+                        className="pn-btn primario"
+                        onClick={() => nuevaLista.trim() && void sobreLista({ accion: 'agregar', lista: nuevaLista.trim(), items: [] }).then(() => setNuevaLista(''))}
+                      >
+                        Crear lista
+                      </button>
+                    </div>
+                  </div>
+                  {listas.length === 0 && (
+                    <div className="pn-tarjeta">
+                      <p className="pn-ayuda">Todavía no hay listas. Creá una acá o decile a Nooby «agregá leche a la lista de compras».</p>
+                    </div>
+                  )}
+                  {listas.map((l) => (
+                    <div key={l.nombre} className="pn-tarjeta">
+                      <h3>
+                        {l.nombre} <small className="pn-ayuda">({l.items.filter((i) => !i.hecho).length} pendientes)</small>
+                      </h3>
+                      <div className="pn-bit-lista">
+                        {l.items.length === 0 && <p className="pn-ayuda">Vacía.</p>}
+                        {l.items.map((i) => (
+                          <div key={i.id} className="pn-item" data-hecho={i.hecho ? 'si' : undefined}>
+                            <label className="pn-item-check">
+                              <input type="checkbox" checked={i.hecho} onChange={() => void sobreLista({ accion: 'marcar', lista: l.nombre, item: String(i.n), hecho: !i.hecho })} />
+                              <span>{i.texto}</span>
+                            </label>
+                            <button className="pn-ficha" title="Sacar" onClick={() => void sobreLista({ accion: 'quitar', lista: l.nombre, item: String(i.n) })}>
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="pn-fila pn-busca">
+                        <input
+                          className="pn-input"
+                          value={nuevoItem[l.nombre] ?? ''}
+                          maxLength={120}
+                          placeholder="Agregar a esta lista…"
+                          onChange={(e) => setNuevoItem({ ...nuevoItem, [l.nombre]: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && (nuevoItem[l.nombre] ?? '').trim()) {
+                              void sobreLista({ accion: 'agregar', lista: l.nombre, items: [nuevoItem[l.nombre]] }).then(() => setNuevoItem({ ...nuevoItem, [l.nombre]: '' }))
+                            }
+                          }}
+                        />
+                        <button
+                          className="pn-btn primario"
+                          onClick={() =>
+                            (nuevoItem[l.nombre] ?? '').trim() &&
+                            void sobreLista({ accion: 'agregar', lista: l.nombre, items: [nuevoItem[l.nombre]] }).then(() => setNuevoItem({ ...nuevoItem, [l.nombre]: '' }))
+                          }
+                        >
+                          Agregar
+                        </button>
+                      </div>
+                      <div className="pn-fila">
+                        <button className="pn-btn secundario" onClick={() => void sobreLista({ accion: 'reordenar', lista: l.nombre, orden: 'invertir' })}>
+                          ⇅ Dar vuelta
+                        </button>
+                        <button className="pn-btn secundario" onClick={() => void sobreLista({ accion: 'limpiar_hechos', lista: l.nombre })}>
+                          Sacar los tachados
+                        </button>
+                        <button
+                          className="pn-btn peligro"
+                          onClick={() => window.confirm('¿Borrar la lista ' + l.nombre + '?') && void sobreLista({ accion: 'borrar', lista: l.nombre })}
+                        >
+                          Borrar lista
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </>
               )}
             </>

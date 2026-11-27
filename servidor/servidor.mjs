@@ -15,7 +15,8 @@ import { GET as pedirCiudad } from '../api/ciudad.js'
 import { GET as pedirClima } from '../api/clima.js'
 import { crearBitacora, crearMemoria, esDia, claveDia } from './bitacora.mjs'
 import { crearUso, esperaDe } from './uso.mjs'
-import { charlar, describirCodigo, ErrorIA, ERRORES, limpiarMensajes, MODELO_POR_DEFECTO, MODELOS_RETIRADOS, juntarPcm, transcribir } from './ia.mjs'
+import { crearListas, leerLista } from './listas.mjs'
+import { charlar, describirCodigo, ErrorIA, ERRORES, limpiarMensajes, MODELO_POR_DEFECTO, MODELOS_ALTERNATIVOS, MODELOS_RETIRADOS, juntarPcm, transcribir } from './ia.mjs'
 
 const RAIZ = fileURLToPath(new URL('..', import.meta.url))
 const WEB = join(RAIZ, 'dist')
@@ -36,7 +37,7 @@ const porDefecto = {
     autoabrir: true,
     ntfy: { servidor: 'https://ntfy.sh', tema: '' },
     /** Charla libre con IA (Groq). La clave vive solo acá: nunca se manda al celu ni a /api/config. */
-    ia: { clave: '', modelo: MODELO_POR_DEFECTO, whisper: true },
+    ia: { clave: '', modelo: MODELO_POR_DEFECTO, whisper: true, version: 2 },
   },
 }
 
@@ -59,6 +60,12 @@ function guardar() {
 const estado = cargar()
 // Un modelo que Groq ya retiró y quedó guardado se cambia solo por el actual.
 if (MODELOS_RETIRADOS.includes(estado.servidor.ia.modelo)) estado.servidor.ia.modelo = MODELO_POR_DEFECTO
+if ((estado.servidor.ia.version ?? 1) < 2) {
+  // v0.11: el modelo principal pasa a qwen (sin razonamiento), con gpt-oss de respaldo. Una sola vez: después se respeta lo que elijas.
+  estado.servidor.ia.modelo = MODELO_POR_DEFECTO
+  estado.servidor.ia.version = 2
+  guardar()
+}
 // Variables de entorno: pisan lo guardado, pero nunca se guardan en el archivo.
 const PUERTO = Number(process.env.NOOBY_PUERTO) || estado.servidor.puerto
 const ADB = process.env.NOOBY_ADB || estado.servidor.adb
@@ -303,6 +310,7 @@ const bitacora = crearBitacora(join(CARPETA, 'bitacora'))
 const memoria = crearMemoria(join(CARPETA, 'memoria.json'))
 // Cuánto se usa la IA (tokens, minutos de audio, cupo): se ve en el panel y se le puede preguntar a Nooby.
 const uso = crearUso(join(CARPETA, 'uso.json'))
+const listas = crearListas(join(CARPETA, 'listas.json'))
 
 // ---------- charla con IA: herramientas que puede usar ----------
 const claveIA = () => process.env.GROQ_API_KEY || estado.servidor.ia.clave
@@ -372,6 +380,34 @@ async function herramientaIA(nombre, a) {
       agenda = agenda.filter((i) => !(i.estado === 'pendiente' && (cuales === 'todos' || i.tipo === cuales)))
       guardarAgenda()
       return { canceladas: antes - agenda.length }
+    }
+    case 'lista_agregar': {
+      const items = Array.isArray(a.items) ? a.items : [a.items]
+      const r = listas.agregar(String(a.lista ?? ''), items.map(String))
+      return { ok: true, lista: r.nombre, agregados: r.sumados, ya_estaban: r.repetidos, ahora: r.items.map((i) => i.texto + (i.hecho ? ' (tachado)' : '')) }
+    }
+    case 'lista_ver': {
+      if (!a.lista) return { listas: listas.todas().map((l) => ({ lista: l.nombre, items: l.items.map((i) => i.texto + (i.hecho ? ' (tachado)' : '')) })) }
+      const v = listas.ver(String(a.lista))
+      return v ? { lista: v.nombre, items: v.items.map((i) => i.texto + (i.hecho ? ' (tachado)' : '')) } : { error: 'esa lista no existe' }
+    }
+    case 'lista_marcar': {
+      const r = listas.marcar(String(a.lista ?? ''), String(a.item ?? ''), a.hecho !== false)
+      return r ? { ok: true, item: r.item } : { error: 'no encontré ese ítem en esa lista' }
+    }
+    case 'lista_quitar': {
+      const r = listas.quitar(String(a.lista ?? ''), String(a.item ?? ''))
+      return r ? { ok: true, item: r.item } : { error: 'no encontré ese ítem en esa lista' }
+    }
+    case 'lista_reordenar': {
+      const r = listas.reordenar(String(a.lista ?? ''), String(a.accion ?? ''), a.item == null ? undefined : String(a.item))
+      return r ? { ok: true, ahora: r.items.map((i) => i.texto) } : { error: 'no pude reordenar (revisá la lista y el ítem)' }
+    }
+    case 'lista_borrar': {
+      const nombre = String(a.lista ?? '')
+      if (a.solo_tachados) return listas.limpiarHechos(nombre) ? { ok: true } : { error: 'esa lista no existe' }
+      if (a.solo_vaciar) return listas.vaciar(nombre) ? { ok: true } : { error: 'esa lista no existe' }
+      return listas.borrar(nombre) ? { ok: true } : { error: 'esa lista no existe' }
     }
     case 'ver_uso': {
       const r = uso.resumen()
@@ -558,6 +594,66 @@ process.on('exit', () => {
     /* ya terminó */
   }
 })
+
+let comparando = false
+/**
+ * Prueba cada modelo con 4 pedidos típicos de Nooby (saludo, temporizador, lista, recordatorio sin hora) y cuenta aciertos, demora y tokens.
+ * Las herramientas son de mentira (no crean nada de verdad). Cuesta unos 5 mil tokens por modelo.
+ */
+async function compararModelos(res) {
+  if (!claveIA()) return json(res, 200, { error: 'sin_clave' })
+  if (comparando) return json(res, 429, { error: 'ya hay una comparación en curso' })
+  comparando = true
+  try {
+    const pruebas = [
+      { id: 'saludo', texto: 'Hola, ¿cómo andás? Contame en una frase qué podés hacer.', ok: (r) => r.llamadas.length === 0 && r.palabras <= 45 },
+      { id: 'temporizador', texto: 'Poneme un temporizador de 3 minutos para los fideos.', ok: (r) => r.llamadas.some((l) => l.nombre === 'poner_temporizador') },
+      { id: 'lista', texto: 'Armame una lista de cosas para el taller: limpiar, ordenar los filamentos y calibrar la H2C.', ok: (r) => r.llamadas.some((l) => l.nombre === 'lista_agregar') },
+      { id: 'sin_hora', texto: 'Recordame llamar al contador.', ok: (r) => r.llamadas.length === 0 && /\?/.test(r.texto) },
+    ]
+    const resultados = []
+    for (const modelo of MODELOS_ALTERNATIVOS) {
+      const filas = []
+      let tokens = 0
+      for (const p of pruebas) {
+        const llamadas = []
+        const t0 = Date.now()
+        let texto = ''
+        let error = null
+        try {
+          const r = await charlar({
+            clave: claveIA(),
+            modelo,
+            soloEste: true,
+            historial: [{ role: 'user', content: p.texto }],
+            contexto: { nombre: estado.config.nombre, ciudad: estado.config.ciudad, ahora: new Date(), sentadoMin: 0, memoria: [] },
+            ejecutar: async (nombre, args) => {
+              llamadas.push({ nombre, args })
+              return { ok: true } // de mentira: acá no se crea nada
+            },
+            alUso: (u) => {
+              uso.registrar(u)
+              tokens += Number(u.usage?.total_tokens ?? 0)
+            },
+            alError: (e) => uso.registrarError(e),
+          })
+          texto = r.texto
+        } catch (e) {
+          error = e instanceof ErrorIA ? (e.detalle ? e.tipo + ': ' + e.detalle : e.tipo) : String(e)
+          if (e instanceof ErrorIA) uso.registrarError({ tipo: 'chat', modelo, kind: e.tipo, detalle: e.detalle, headers: e.headers })
+        }
+        const palabras = texto.split(/\s+/).filter(Boolean).length
+        const ingles = /\b(the user|we need|let's|should respond)\b/i.test(texto)
+        const ok = !error && !ingles && p.ok({ llamadas, texto, palabras })
+        filas.push({ id: p.id, ok, ms: Date.now() - t0, texto: texto.slice(0, 200), llamadas: llamadas.map((l) => l.nombre), error })
+      }
+      resultados.push({ modelo, aciertos: filas.filter((f) => f.ok).length, de: filas.length, msPromedio: Math.round(filas.reduce((a, f) => a + f.ms, 0) / filas.length), tokens, filas })
+    }
+    return json(res, 200, { resultados, actual: estado.servidor.ia.modelo })
+  } finally {
+    comparando = false
+  }
+}
 
 async function manejar(req, res) {
   if (esDeEstaPc(req)) {
@@ -783,6 +879,57 @@ async function manejar(req, res) {
     }
     if (req.method === 'DELETE') return json(res, 200, { borrados: memoria.borrarId(String(url.searchParams.get('id') ?? '')) })
   }
+
+  if (ruta === '/api/listas') {
+    // La usan la cara (por voz: "agregá leche a la lista") y el panel. Solo por localhost.
+    if (req.method === 'GET') {
+      const nombre = url.searchParams.get('lista')
+      if (nombre == null) return json(res, 200, { listas: listas.todas() })
+      const v = listas.ver(nombre)
+      return v ? json(res, 200, { ...v, texto: leerLista(v) }) : json(res, 404, { error: 'no_existe' })
+    }
+    if (req.method === 'POST') {
+      if (!String(req.headers['content-type']).includes('application/json')) return json(res, 415, { error: 'usá application/json' })
+      try {
+        const c = JSON.parse(await leerCuerpo(req))
+        const nombre = String(c.lista ?? '')
+        const item = String(c.item ?? '')
+        let r = null
+        switch (c.accion) {
+          case 'agregar':
+            r = listas.agregar(nombre, Array.isArray(c.items) ? c.items.map(String) : [String(c.items ?? '')])
+            break
+          case 'ver':
+            r = listas.ver(nombre)
+            break
+          case 'marcar':
+            r = listas.marcar(nombre, item, c.hecho !== false)
+            break
+          case 'quitar':
+            r = listas.quitar(nombre, item)
+            break
+          case 'reordenar':
+            r = listas.reordenar(nombre, String(c.orden ?? ''), item)
+            break
+          case 'limpiar_hechos':
+            r = listas.limpiarHechos(nombre)
+            break
+          case 'vaciar':
+            r = listas.vaciar(nombre)
+            break
+          case 'borrar':
+            return json(res, 200, { ok: listas.borrar(nombre) })
+          default:
+            return json(res, 400, { error: 'accion: agregar|ver|marcar|quitar|reordenar|limpiar_hechos|vaciar|borrar' })
+        }
+        return r ? json(res, 200, { ...r, texto: leerLista(r) }) : json(res, 404, { error: 'no_encontrado' })
+      } catch (e) {
+        return json(res, 400, { error: e instanceof Error ? e.message : 'JSON inválido' })
+      }
+    }
+  }
+
+  if (ruta === '/api/ia/comparar' && req.method === 'POST') return compararModelos(res)
 
   if (ruta === '/api/uso' && req.method === 'GET') return json(res, 200, uso.resumen())
 

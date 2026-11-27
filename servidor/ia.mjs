@@ -2,9 +2,9 @@
 // Vive en el servidor de la PC: la clave nunca llega al celu. Este módulo no toca el disco ni la red por su cuenta:
 // recibe `fetchFn` y `ejecutar` (las herramientas) para poder probarlo sin internet.
 
-export const MODELO_POR_DEFECTO = 'openai/gpt-oss-120b'
+export const MODELO_POR_DEFECTO = 'qwen/qwen3.8-27b'
 /** Si el modelo elegido ya no existe (Groq los va retirando), se prueban estos en orden. */
-export const MODELOS_ALTERNATIVOS = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b']
+export const MODELOS_ALTERNATIVOS = ['qwen/qwen3.8-27b', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b']
 /** Modelos que Groq ya dio de baja: si quedaron guardados se reemplazan solos. */
 export const MODELOS_RETIRADOS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant']
 export const URL_GROQ = 'https://api.groq.com/openai/v1/chat/completions'
@@ -139,6 +139,107 @@ export const HERRAMIENTAS = [
   },
 ]
 
+const HERRAMIENTAS_LISTAS = [
+  {
+    type: 'function',
+    function: {
+      name: 'lista_agregar',
+      description: 'Agrega cosas a una lista (compras, pendientes, tareas, la que sea). Crea la lista si no existe.',
+      parameters: {
+        type: 'object',
+        properties: {
+          lista: { type: 'string', description: 'Nombre de la lista, una palabra (ej. "compras"). Si no dijo, omitila.' },
+          items: { type: 'array', items: { type: 'string' }, description: 'Las cosas a agregar, una por elemento.' },
+        },
+        required: ['items'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'lista_ver',
+      description: 'Lee una lista. Sin nombre devuelve todas las listas.',
+      parameters: { type: 'object', properties: { lista: { type: 'string' } } },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'lista_marcar',
+      description: 'Tacha (o destacha) una cosa de una lista porque ya está hecha.',
+      parameters: {
+        type: 'object',
+        properties: { lista: { type: 'string' }, item: { type: 'string', description: 'Texto o número del ítem.' }, hecho: { type: 'boolean', description: 'false para destachar.' } },
+        required: ['item'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'lista_quitar',
+      description: 'Saca una cosa de una lista.',
+      parameters: { type: 'object', properties: { lista: { type: 'string' }, item: { type: 'string' } }, required: ['item'] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'lista_reordenar',
+      description: 'Cambia el orden de una lista: "invertir" la da vuelta (al revés); "primero" o "ultimo" mueve un ítem.',
+      parameters: {
+        type: 'object',
+        properties: { lista: { type: 'string' }, accion: { type: 'string', enum: ['invertir', 'primero', 'ultimo'] }, item: { type: 'string' } },
+        required: ['accion'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'lista_borrar',
+      description: 'Borra una lista entera, o solo la deja vacía (solo_vaciar), o saca lo ya tachado (solo_tachados).',
+      parameters: { type: 'object', properties: { lista: { type: 'string' }, solo_vaciar: { type: 'boolean' }, solo_tachados: { type: 'boolean' } } },
+    },
+  },
+]
+HERRAMIENTAS.push(...HERRAMIENTAS_LISTAS)
+
+/**
+ * Las herramientas que se mandan en cada pedido. Cada una ocupa tokens y el cupo gratis de Groq es por día (200 mil por modelo), así que
+ * solo van las que tienen que ver con lo que se está hablando (los últimos mensajes). La agenda (temporizadores y recordatorios) va siempre.
+ */
+const GRUPOS_HERRAMIENTAS = [
+  { re: /lista|compr|tarea|pendiente|tach|agreg|sum[aá]|pon[eé]|sac[aá]|quit[aá]|al reves|reves|primero|ultimo|hech[oa]|orden/, nombres: ['lista_agregar', 'lista_ver', 'lista_marcar', 'lista_quitar', 'lista_reordenar', 'lista_borrar'] },
+  { re: /bitacora|ayer|anteayer|semana|mes|hablamos|dijimos|charlamos|resum|busc[aá]|nota|idea|guard|diario|cuando (hable|dije)/, nombres: ['leer_bitacora', 'buscar_bitacora', 'anotar_en_bitacora'] },
+  { re: /acord|record[aá]|olvid|memoria|dato|mi (hermano|hermana|nombre|cumple|casa|trabajo)|te cuento que/, nombres: ['recordar_dato', 'olvidar_dato'] },
+  { re: /clima|temperatura|llov|llueve|frio|calor|pronostico|paraguas|abrigo|el tiempo/, nombres: ['ver_clima'] },
+  { re: /impresor|imprim|h2c|\ba1\b|neptun|bambu|pieza|filamento/, nombres: ['ver_impresoras'] },
+  { re: /token|cupo|uso de|gast|limite|groq|cuanto (me )?queda/, nombres: ['ver_uso'] },
+]
+const SIEMPRE = ['poner_temporizador', 'crear_recordatorio', 'ver_agenda', 'cancelar_agenda']
+
+export function herramientasPara(textos) {
+  const t = (Array.isArray(textos) ? textos : [textos]).map((x) => String(x ?? '')).join(' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  const nombres = new Set(SIEMPRE)
+  for (const g of GRUPOS_HERRAMIENTAS) if (g.re.test(t)) for (const n of g.nombres) nombres.add(n)
+  return HERRAMIENTAS.filter((h) => nombres.has(h.function.name))
+}
+
+/** Parámetros de razonamiento para cada modelo y "nivel": 0 = lo ideal, 1 = otra forma de esconderlo, 2 = sin parámetros (por si la API los rechaza). */
+export function paramsRazonamiento(modelo, nivel) {
+  if (/gpt-oss/.test(modelo)) return nivel === 0 ? { reasoning_effort: 'low', include_reasoning: false } : {}
+  // qwen: "none" lo apaga del todo (modo instructivo: más rápido, gasta menos tokens y no se cuela el pensamiento)
+  if (/qwen/.test(modelo)) return nivel === 0 ? { reasoning_effort: 'none' } : nivel === 1 ? { reasoning_format: 'hidden' } : {}
+  return {}
+}
+
+/** Los intentos que se hacen con un modelo si la API rechaza algo (HTTP 400): del ideal a lo más simple. */
+function variantes(modelo) {
+  return /qwen/.test(modelo) ? [{ nivel: 0 }, { nivel: 1 }, { nivel: 2 }, { nivel: 2, herramientas: false }] : [{ nivel: 0 }, { nivel: 2 }, { nivel: 2, herramientas: false }]
+}
+
 /** Lo que Nooby "sabe" de entrada: quién es, con quién habla y cómo tiene que contestar (se lee en voz alta). */
 export function instrucciones({ nombre, ciudad, ahora, sentadoMin, memoria = [] }) {
   const fecha = new Intl.DateTimeFormat('es-AR', { dateStyle: 'full', timeStyle: 'short', hour12: false }).format(ahora)
@@ -150,6 +251,7 @@ export function instrucciones({ nombre, ciudad, ahora, sentadoMin, memoria = [] 
     'REGLAS: tus respuestas se leen con un parlante, así que contestá en una o dos frases cortas (menos de 30 palabras, salvo que te pidan un resumen o una explicación), sin repetir lo que dijo la persona, sin listas, sin markdown, sin emojis ni símbolos. Escribí los números como se dicen ("las cinco y media", "veinte grados").',
     'Para temporizadores, recordatorios, clima e impresoras usá SIEMPRE las herramientas; nunca digas que hiciste algo sin haberla llamado ni inventes datos del clima o de las impresoras. Para fechas calculá desde la fecha de hoy.',
     `Todo lo que hablan queda guardado en una bitácora (la ve ${nombre} en el panel): podés leerla con las herramientas para contestar "qué hablamos ayer" o "resumime la semana". Conversá de forma natural, como una persona: respondé a lo que dijo, hacé alguna pregunta de vuelta cuando venga bien, y acordate de lo que se habló antes.`,
+    'Para listas (compras, tareas, pendientes) usá las herramientas lista_*, no la bitácora. Cuando agregues o taches algo, confirmalo en una frase corta.',
     'Respondé directamente con lo que vas a decir, en español: nunca escribas tu razonamiento ni expliques cómo vas a contestar.',
     'Si te piden algo que no podés hacer (por ejemplo prender luces o buscar en internet), decilo con simpatía y ofrecé lo que sí hacés. No inventes. Si no entendiste, pedí que lo repita.',
   ]
@@ -189,7 +291,7 @@ export class ErrorIA extends Error {
 }
 
 /** Una vuelta de la API. Traduce los códigos HTTP a tipos de error propios. */
-async function pedir({ fetchFn, clave, modelo, mensajes, herramientas = true, razonamiento = true, alUso }) {
+async function pedir({ fetchFn, clave, modelo, mensajes, herramientas = true, tools = HERRAMIENTAS, nivel = 0, alUso }) {
   let r
   try {
     r = await fetchFn(process.env.NOOBY_IA_URL || URL_GROQ, {
@@ -198,9 +300,9 @@ async function pedir({ fetchFn, clave, modelo, mensajes, herramientas = true, ra
       body: JSON.stringify({
         model: modelo,
         messages: mensajes,
-        ...(herramientas ? { tools: HERRAMIENTAS, tool_choice: 'auto' } : {}),
+        ...(herramientas ? { tools, tool_choice: 'auto' } : {}),
         // Los modelos "que razonan" (gpt-oss) piensan antes de contestar: poco esfuerzo y sin devolver ese pensamiento.
-        ...(razonamiento && /gpt-oss/.test(modelo) ? { reasoning_effort: 'low', include_reasoning: false } : {}),
+        ...paramsRazonamiento(modelo, nivel),
         temperature: 0.6,
         max_tokens: 1024, // el razonamiento también gasta de acá: si es muy poco la respuesta sale vacía
       }),
@@ -241,21 +343,22 @@ async function detalleError(r) {
  * Charla con herramientas: la IA puede pedir ejecutar cosas (poner un temporizador, ver el clima…) y se le devuelve el resultado
  * hasta que contesta con texto. `ejecutar(nombre, args)` devuelve un objeto simple. Devuelve { texto }.
  */
-export async function charlar({ clave, modelo, historial, contexto, ejecutar, fetchFn = fetch, alUso, alError }) {
+export async function charlar({ clave, modelo, historial, contexto, ejecutar, fetchFn = fetch, alUso, alError, soloEste = false }) {
   if (!clave) throw new ErrorIA('sin_clave')
   const msgs = [{ role: 'system', content: instrucciones(contexto) }, ...historial]
   let modeloUsado = modelo || MODELO_POR_DEFECTO
   let ultimoError = null
   let huboHerramientas = false
+  const tools = herramientasPara(historial.slice(-4).map((h) => h.content))
   let avisadoSinHerramienta = false
   const ultimoUsuario = planoIA([...historial].reverse().find((h) => h.role === 'user')?.content)
   let cambio = null // por qué se usó otro modelo: '404' (ya no existe) o 'cupo' (a ese se le acabó el cupo)
   for (let vuelta = 0; vuelta < MAX_VUELTAS; vuelta++) {
     let m
-    for (const candidato of [modelo || MODELO_POR_DEFECTO, ...MODELOS_ALTERNATIVOS.filter((x) => x !== modelo)].filter((x, i, v) => v.indexOf(x) === i)) {
-      const base = { fetchFn, clave, modelo: candidato, mensajes: msgs, alUso }
+    for (const candidato of (soloEste ? [modelo || MODELO_POR_DEFECTO] : [modelo || MODELO_POR_DEFECTO, ...MODELOS_ALTERNATIVOS.filter((x) => x !== modelo)]).filter((x, i, v) => v.indexOf(x) === i)) {
+      const base = { fetchFn, clave, modelo: candidato, mensajes: msgs, alUso, tools }
       try {
-        const intentos = [{}, { razonamiento: false }, { razonamiento: false, herramientas: false }]
+        const intentos = variantes(candidato)
         for (let i = 0; i < intentos.length; i++) {
           try {
             m = await pedir({ ...base, ...intentos[i] })

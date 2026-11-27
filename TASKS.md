@@ -23,6 +23,9 @@
 ## Hecho (v0.3.2)
 - [x] Palabra clave con gramática cerrada (llamado/libre) y freno automático de la cámara
 
+## Hecho (v0.11.0)
+- [x] Listas de verdad (compras, pendientes…) por voz, IA y panel; modelo principal qwen3.8-27b sin razonamiento con gpt-oss de respaldo; herramientas de IA según el tema (menos tokens); comparador de modelos en el panel
+
 ## Hecho (v0.10.0)
 - [x] Cara nueva en SVG: ojos con iris y párpados, cejas, mejillas y boca con labios/dientes/lengua; 13 humores; la boca sigue las letras de lo que dice; parpadeo, respiración y mirada distraída. Galería en /#/caras
 
@@ -31,7 +34,6 @@
 
 ## Pendiente (orden acordado)
 - [ ] Buen día / buenas noches con resumen (agenda, clima, impresoras)
-- [ ] Notas y lista de compras
 - [ ] Impresoras: cuánto falta, avisos por porcentaje, historial
 - [ ] Modo foco (pomodoro)
 - [ ] Despertador y recordatorios repetidos

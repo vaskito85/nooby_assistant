@@ -1,3 +1,4 @@
+import { entenderLista } from './listas'
 // Lógica de voz, pura (sin DOM): detectar que te llaman ("che nooby") e interpretar lo que pedís.
 // El APK solo pasa lo que escucha como texto; lo demás se decide acá, así se ajusta sin reinstalar el celu.
 
@@ -75,6 +76,11 @@ export function detectarLlamado(
 }
 
 export type Orden =
+  | 'listaAgregar'
+  | 'listaVer'
+  | 'listaMarcar'
+  | 'listaQuitar'
+  | 'listaVaciar'
   | 'anotarBitacora'
   | 'pausarBitacora'
   | 'retomarBitacora'
@@ -154,7 +160,10 @@ export function interpretar(texto: string): Orden | null {
 
   // ---- pedidos con un verbo claro (aguantan frases largas)
   if (n <= MAX_PEDIDO) {
-    // La bitácora va primero: "anotá en la bitácora que estuve sentado" no es "cuánto llevo sentado".
+    // Las listas ("agregá leche a la lista", "tachá pan") van primero: nombran la lista o usan verbos propios.
+    const lista = entenderLista(texto)
+    if (lista) return ({ agregar: 'listaAgregar', ver: 'listaVer', marcar: 'listaMarcar', quitar: 'listaQuitar', vaciar: 'listaVaciar' } as const)[lista.accion]
+    // La bitácora va después: "anotá en la bitácora que estuve sentado" no es "cuánto llevo sentado".
     if (ANOTAR_BITACORA.test(t)) return 'anotarBitacora'
     if (RETOMAR_BITACORA.test(t)) return 'retomarBitacora' // antes que "pausar": "salí del modo privado" también nombra el modo privado
     if (PAUSAR_BITACORA.test(t)) return 'pausarBitacora'
@@ -211,6 +220,15 @@ export interface GrupoFrases {
 
 /** Todo lo que se le puede decir a Nooby (después de despertarlo con "che nooby"). */
 export const CATALOGO: GrupoFrases[] = [
+  {
+    orden: 'listaAgregar',
+    titulo: 'Agregar a una lista (compras, pendientes, la que quieras)',
+    ejemplos: ['agregá leche y pan a la lista de compras', 'anotá limpiar el taller en la lista', 'poné filamento negro en la lista de compras'],
+  },
+  { orden: 'listaVer', titulo: 'Leer una lista', ejemplos: ['qué hay en la lista de compras', 'leeme la lista', 'cómo va la lista'] },
+  { orden: 'listaMarcar', titulo: 'Tachar algo de la lista', ejemplos: ['tachá leche', 'marcá limpiar el taller como hecho', 'ya compré la leche de la lista de compras'] },
+  { orden: 'listaQuitar', titulo: 'Sacar algo de la lista', ejemplos: ['sacá el pan de la lista de compras', 'quitá limpiar el taller de la lista'] },
+  { orden: 'listaVaciar', titulo: 'Vaciar una lista', ejemplos: ['vaciá la lista de compras', 'borrá la lista'] },
   {
     orden: 'anotarBitacora',
     titulo: 'Anotar algo en la bitácora (queda guardado en la PC)',
